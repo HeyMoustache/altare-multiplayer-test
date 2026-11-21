@@ -115,7 +115,7 @@
   // Each move gets a unique ID so a double-tap only counts once.
   function makeMove(cell) {
     if (!state || state.winner || state.turn !== state.you || state.board[cell]) return;
-    send({ type: 'move', cell, id: crypto.randomUUID() });
+     send({ type: 'move', cell, id: Date.now() + '-' + Math.random().toString(36).slice(2) });
   }
 
   function render() {

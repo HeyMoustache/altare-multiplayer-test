@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multiplayer test</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font: 16px/1.4 system-ui, -apple-system, sans-serif;
+    background: #15161a; color: #ececec;
+  }
+  main { width: min(360px, 92vw); text-align: center; }
+  h1 { font-size: 1.2rem; margin: 0 0 1rem; font-weight: 600; }
+  .row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  input, button {
+    font: inherit; padding: .6rem .8rem; border-radius: 8px;
+    border: 1px solid #3a3c44; background: #22242a; color: inherit;
+  }
+  input { flex: 1; text-transform: uppercase; }
+  button { cursor: pointer; }
+  button:hover { background: #2d3038; }
+  #board {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    aspect-ratio: 1; margin: 1rem 0;
+  }
+  .cell {
+    font-size: 2.6rem; font-weight: 700; border-radius: 10px;
+    background: #22242a; border: 1px solid #3a3c44;
+  }
+  .cell.X { color: #6fb3ff; }
+  .cell.O { color: #ffb15e; }
+  #status { min-height: 1.4em; }
+  #ping { font-variant-numeric: tabular-nums; color: #9a9ca5; font-size: .9rem; margin-top: .75rem; }
+  #share { font-size: .85rem; color: #9a9ca5; word-break: break-all; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Multiplayer test</h1>
+
+  <div id="lobby" class="row">
+    <input id="roomInput" placeholder="Room code" maxlength="12">
+    <button id="joinBtn">Join</button>
+  </div>
+
+  <div id="game" class="hidden">
+    <div id="status">Connecting…</div>
+    <div id="board"></div>
+    <button id="resetBtn">New game</button>
+    <p id="share"></p>
+  </div>
+
+  <div id="ping">Delay: –</div>
+</main>
+
+<script>
+  // Connect back to whichever server sent us this page.
+  const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+
+  const $ = (id) => document.getElementById(id);
+  const boardEl = $('board');
+  let ws, roomCode, state;
+  const pings = [];
+
+  // Build the 9 squares.
+  for (let i = 0; i < 9; i++) {
+    const b = document.createElement('button');
+    b.className = 'cell';
+    b.onclick = () => makeMove(i);
+    boardEl.appendChild(b);
+  }
+
+  // Pre-fill the room code if the link has ?room=ABC
+  const fromLink = new URLSearchParams(location.search).get('room');
+  $('roomInput').value = fromLink || Math.random().toString(36).slice(2, 7).toUpperCase();
+
+  $('joinBtn').onclick = () => join($('roomInput').value.trim().toUpperCase());
+  $('resetBtn').onclick = () => send({ type: 'reset' });
+  if (fromLink) join(fromLink.toUpperCase());
+
+  function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  }
+
+  function join(code) {
+    if (!code) return;
+    roomCode = code;
+    $('lobby').classList.add('hidden');
+    $('game').classList.remove('hidden');
+    const link = location.origin + '/?room=' + code;
+    $('share').textContent = 'Send this link to player 2: ' + link;
+    history.replaceState(null, '', '/?room=' + code);
+    connect();
+  }
+
+  function connect() {
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => send({ type: 'join', room: roomCode });
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'pong') return recordPing(performance.now() - msg.t);
+      if (msg.type === 'error') return ($('status').textContent = msg.message);
+      if (msg.type === 'state') { state = msg; render(); }
+    };
+    ws.onclose = () => {
+      $('status').textContent = 'Connection lost – reconnecting…';
+      setTimeout(connect, 2000);
+    };
+  }
+
+  // Each move gets a unique ID so a double-tap only counts once.
+  function makeMove(cell) {
+    if (!state || state.winner || state.turn !== state.you || state.board[cell]) return;
+    send({ type: 'move', cell, id: crypto.randomUUID() });
+  }
+
+  function render() {
+    [...boardEl.children].forEach((b, i) => {
+      const v = state.board[i] || '';
+      b.textContent = v;
+      b.className = 'cell ' + v;
+    });
+    let s;
+    if (state.winner === 'draw') s = "It's a draw.";
+    else if (state.winner) s = state.winner === state.you ? 'You win!' : 'You lose.';
+    else if (!state.opponentHere) s = `You are ${state.you}. Waiting for player 2…`;
+    else s = state.turn === state.you ? `Your turn (${state.you})` : "Opponent's turn…";
+    $('status').textContent = s;
+  }
+
+  // Measure delay: send the time, server sends it straight back.
+  function recordPing(ms) {
+    pings.push(ms);
+    if (pings.length > 10) pings.shift();
+    const avg = Math.round(pings.reduce((a, b) => a + b, 0) / pings.length);
+    $('ping').textContent = `Delay: ${Math.round(ms)} ms (average ${avg} ms)`;
+  }
+  setInterval(() => send({ type: 'ping', t: performance.now() }), 2000);
+</script>
+</body>
+</html>

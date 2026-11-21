@@ -1,0 +1,16 @@
+{
+  "name": "altare-multiplayer-test",
+  "version": "1.0.0",
+  "description": "Tiny two-player turn-based test game to try out multiplayer on Altare",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

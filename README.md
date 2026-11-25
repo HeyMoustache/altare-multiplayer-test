@@ -36,6 +36,7 @@ Each browser tab is its own player, so two tabs on one computer can play each ot
 - In a draft, the duel's seed deals 3 boons from `DUEL_BOONS` in `rules.js`. Each player sends `{type:'pick', boons:[two of them], id}` once. Moves are refused, and the turn timer waits, until both have picked.
 - Each `state` has `mode`, `draft: {offer, picked, picks}` (you only see your own picks until both have chosen) and `momentum` (Battle Fervour streaks).
 - The boons act like relics in the battle odds, so the server and both browsers always agree.
+- Each `state` also has `summary`: moves, battles and battles won for each side, for the end-of-duel screen.
 
 ## Turn timer
 

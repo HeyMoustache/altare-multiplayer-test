@@ -297,6 +297,17 @@ export function rematchDuel(old, seed) {
   return duel;
 }
 
+// A short tally for the end-of-duel screen: moves made, battles fought and battles won, per side.
+export function duelSummary(duel) {
+  const t = { w: { moves: 0, battles: 0, won: 0 }, b: { moves: 0, battles: 0, won: 0 } };
+  for (const h of duel.history) {
+    if (!t[h.seat]) continue;
+    if (h.type === 'move') t[h.seat].moves++;
+    if (h.type === 'challenge') { t[h.seat].moves++; t[h.seat].battles++; if (h.result?.kind === 'victory') t[h.seat].won++; }
+  }
+  return t;
+}
+
 // What one player is told about the duel. The whole board is sent every time,
 // so if a message is ever lost, the next one puts everything right.
 export function stateFor(duel, seat, present = { w: false, b: false }) {
@@ -335,6 +346,7 @@ export function stateFor(duel, seat, present = { w: false, b: false }) {
       picked: { w: Boolean(duel.draft.picks.w), b: Boolean(duel.draft.picks.b) },
       picks: inDraft(duel) ? { w: seat === 'w' ? duel.draft.picks.w : null, b: seat === 'b' ? duel.draft.picks.b : null } : duel.draft.picks,
     } : null,
+    summary: duelSummary(duel),
     momentum: { w: boonsOf(duel, 'w').has('fervour') ? duel.momentum.w : 0, b: boonsOf(duel, 'b').has('fervour') ? duel.momentum.b : 0 },
     moveCount: duel.history.length,
     seed: duel.status.over ? duel.seed : undefined,   // revealed at the end, so a duel can be replayed

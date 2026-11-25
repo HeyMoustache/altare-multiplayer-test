@@ -44,7 +44,12 @@
   .warn { color: #f0aaa6; font-size: .88rem; }
   #log { max-height: 260px; overflow-y: auto; font-size: .9rem; margin: 0; padding-left: 18px; }
   #log li { margin-bottom: 4px; }
-  #share { word-break: break-all; color: #cfc3cf; font-size: .88rem; }
+  #share { color: #cfc3cf; font-size: .88rem; }
+  .share-label { display: block; margin-bottom: 6px; }
+  .share-row { position: relative; display: flex; gap: 6px; flex-wrap: wrap; }
+  #inviteLink { flex: 1 1 220px; min-width: 0; text-transform: none; font-size: .85rem; cursor: text; }
+  .tip { position: absolute; right: 0; top: -34px; background: #f2c14e; color: #1b140a; font-weight: 700; font-size: .8rem; padding: 4px 9px; border-radius: 6px; opacity: 0; transform: translateY(4px); transition: opacity .2s, transform .2s; pointer-events: none; }
+  .tip.show { opacity: 1; transform: none; }
   #ping { color: #8f8593; font-size: .85rem; font-variant-numeric: tabular-nums; }
   #err { color: #f0aaa6; min-height: 1.2em; font-size: .9rem; }
   .hidden { display: none !important; }
@@ -86,7 +91,15 @@
           <ol id="log"></ol>
         </div>
         <div class="panel">
-          <div id="share"></div>
+          <div id="share">
+            <label for="inviteLink" class="share-label">Invite a friend: send them this link</label>
+            <div class="share-row">
+              <input id="inviteLink" readonly title="Click to select the whole link">
+              <button id="copyBtn" title="Copy the invite link, then paste it into WhatsApp, Discord, a text…">Copy link</button>
+              <button id="shareBtn" class="hidden" title="Send the link with your phone's share menu">Share…</button>
+              <span id="copyTip" class="tip" role="status"></span>
+            </div>
+          </div>
           <div class="row" style="margin-top:8px"><button id="resignBtn">Resign</button></div>
           <div id="ping" style="margin-top:8px">Delay: –</div>
         </div>
@@ -132,6 +145,22 @@
     $('log').innerHTML = ''; $('game').classList.add('hidden'); $('lobby').classList.remove('hidden');
   }
   $('rematchBtn').onclick = () => { send({ type:'rematch' }); $('rematchBtn').disabled = true; $('rematchBtn').textContent = 'Waiting for your opponent…'; };
+  // Invite link: click to select it all, Copy puts it on the clipboard, Share uses the phone's share menu.
+  $('inviteLink').onclick = () => $('inviteLink').select();
+  function showTip(text) { const t = $('copyTip'); t.textContent = text; t.classList.add('show'); clearTimeout(showTip.timer); showTip.timer = setTimeout(() => t.classList.remove('show'), 1800); }
+  $('copyBtn').onclick = async () => {
+    const link = $('inviteLink').value;
+    try { await navigator.clipboard.writeText(link); showTip('Link copied!'); }
+    catch {
+      $('inviteLink').select();
+      let copied = false; try { copied = document.execCommand('copy'); } catch {}
+      showTip(copied ? 'Link copied!' : 'Link selected: press Ctrl+C to copy');
+    }
+  };
+  if (navigator.share) {
+    $('shareBtn').classList.remove('hidden');
+    $('shareBtn').onclick = () => navigator.share({ title: "Fortune's Gambit duel", text: 'Join my Fortune\u2019s Gambit duel!', url: $('inviteLink').value }).catch(() => {});
+  }
   $('blessBtn').onclick = () => { blessFrom = blessFrom ? null : selected; render(); };
 
   const fromLink = new URLSearchParams(location.search).get('duel');
@@ -141,7 +170,7 @@
     room = code;
     history.replaceState(null, '', '?duel=' + code);
     $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
-    $('share').textContent = 'Invite link: ' + location.origin + location.pathname + '?duel=' + code;
+    $('inviteLink').value = location.origin + location.pathname + '?duel=' + code;
     connect();
   }
 

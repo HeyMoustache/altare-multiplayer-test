@@ -1,7 +1,8 @@
 // Tests for the duel referee. Run them with:  npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions, startTurnClock, checkTurnClock, cleanTimer } from '../duel.js';
+import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions, startTurnClock, checkTurnClock, cleanTimer, inDraft } from '../duel.js';
+import { DUEL_BOONS, battleForecast, pieceStats } from '../rules.js';
 
 let n = 0; const id = () => 'id-' + (++n);
 function seated(seed = 'test') {
@@ -174,4 +175,76 @@ test('turn timer: running out skips your turn; a move resets the count; three in
   // A rematch keeps the same timer.
   duel.rematch = { w: true, b: true };
   assert.equal(rematchDuel(duel, 'next').timer, 30);
+});
+
+function draftDuel(seed = 'draft-test', timer = 0) {
+  const duel = createDuel({ code: 'D', seed, timer, mode: 'draft' });
+  joinDuel(duel, 'key-alice-1', () => 0.1); joinDuel(duel, 'key-bob-22');
+  return duel;
+}
+
+test('draft: the same three boons for both, from the pool, the same for the same seed', () => {
+  const a = draftDuel('s1'), b = draftDuel('s1');
+  assert.equal(a.draft.offer.length, 3);
+  assert.deepEqual(a.draft.offer, b.draft.offer, 'same seed, same deal');
+  assert.ok(a.draft.offer.every((k) => DUEL_BOONS[k]));
+  assert.equal(new Set(a.draft.offer).size, 3);
+  assert.ok(!Object.keys(DUEL_BOONS).includes('bulwark'), 'Iron Bulwark is not in duels');
+  // Over many seeds, every boon gets dealt sometimes.
+  const seen = new Set(); for (let i = 0; i < 200; i++) for (const k of draftDuel('x' + i).draft.offer) seen.add(k);
+  assert.equal(seen.size, Object.keys(DUEL_BOONS).length);
+  assert.equal(createDuel({ code: 'P', seed: 's', mode: 'plain' }).draft, null);
+  assert.equal(createDuel({ code: 'P', seed: 's' }).mode, 'plain', 'plain unless asked for a draft');
+});
+
+test('draft: nobody moves until both have picked; picks stay secret until then', () => {
+  const duel = draftDuel('secret', 60);
+  startTurnClock(duel);
+  assert.equal(duel.deadline, null, 'no clock during the draft');
+  assert.match(handleAction(duel, 'w', { type: 'move', from: 'e2', to: 'e4', id: id() }).error, /boons first/);
+  const [x, y, z] = duel.draft.offer;
+  assert.match(handleAction(duel, 'w', { type: 'pick', boons: [x], id: id() }).error, /Choose 2/);
+  assert.match(handleAction(duel, 'w', { type: 'pick', boons: [x, x], id: id() }).error, /Choose 2/);
+  assert.match(handleAction(duel, 'w', { type: 'pick', boons: [x, 'bulwark'], id: id() }).error, /Choose 2/);
+  assert.ok(handleAction(duel, 'w', { type: 'pick', boons: [x, y], id: id() }).ok);
+  assert.match(handleAction(duel, 'w', { type: 'pick', boons: [y, z], id: id() }).error, /already chosen/);
+  const forB = stateFor(duel, 'b');
+  assert.equal(forB.draft.picks.w, null, "Dusk can't see Dawn's picks yet");
+  assert.equal(forB.draft.picked.w, true);
+  assert.deepEqual(stateFor(duel, 'w').draft.picks.w, [x, y], 'you see your own');
+  assert.ok(inDraft(duel));
+  assert.ok(handleAction(duel, 'b', { type: 'pick', boons: [y, z], id: id() }).ok);
+  assert.ok(!inDraft(duel));
+  assert.equal(duel.history.at(-1).type, 'draft');
+  assert.ok(duel.deadline > Date.now(), 'the clock starts once both have picked');
+  const watcher = stateFor(duel, null);
+  assert.deepEqual(watcher.draft.picks, { w: [x, y], b: [y, z] }, 'revealed to everyone');
+  assert.ok(handleAction(duel, 'w', { type: 'move', from: 'e2', to: 'e4', id: id() }).ok);
+});
+
+test('draft: boons change the odds the server uses', () => {
+  const duel = draftDuel('odds');
+  duel.draft.offer = ['pikewall', 'royalguard', 'siege'];
+  handleAction(duel, 'w', { type: 'pick', boons: ['pikewall', 'royalguard'], id: id() });
+  handleAction(duel, 'b', { type: 'pick', boons: ['royalguard', 'siege'], id: id() });
+  const ctx = { pieceAt: (sq) => duel.pieces.get(sq) };
+  const withBoons = (c) => ({ ...ctx, relics: (col) => new Set(duel.draft.picks[col]) });
+  assert.equal(pieceStats('e2', withBoons()).guard, pieceStats('e2', ctx).guard + 1, 'Pike Wall: Dawn pawns +1 Guard');
+  assert.equal(pieceStats('e7', withBoons()).guard, pieceStats('e7', ctx).guard, 'not Dusk pawns');
+  assert.equal(pieceStats('e1', withBoons()).guard, pieceStats('e1', ctx).guard + 2, 'Royal Guard: king +2 Guard');
+  // A rematch deals fresh boons and stays a draft.
+  duel.status = { over: true }; duel.rematch = { w: true, b: true };
+  const next = rematchDuel(duel, 'another');
+  assert.equal(next.mode, 'draft'); assert.deepEqual(next.draft.picks, { w: null, b: null });
+});
+
+test('boons: Siege Oil, Pilgrim\'s Blade and Queen\'s Favour add 10% to their piece\'s attacks', () => {
+  for (const [boon, type] of [['siege', 'r'], ['pilgrim', 'b'], ['favour', 'q'], ['whetstone', 'n']]) {
+    const pieces = new Map([['d4', { type, color: 'w', hp: 2, maxHp: 2, mightBuff: 0, guardBuff: 0, moves: 1 }], ['d5', { type: 'p', color: 'b', hp: 1, maxHp: 1, mightBuff: 0, guardBuff: 0, moves: 1 }]]);
+    const m = { from: 'd4', to: 'd5', flags: 'c' };
+    const plain = battleForecast(m, { pieceAt: (s) => pieces.get(s) });
+    const boosted = battleForecast(m, { pieceAt: (s) => pieces.get(s), relics: (c) => new Set(c === 'w' ? [boon] : []) });
+    assert.ok(Math.abs(boosted.chance - Math.min(.95, plain.chance + .10)) < 1e-9, boon);
+    assert.ok(boosted.adjustments.some((a) => a.name === DUEL_BOONS[boon].name), boon + ' is listed in the forecast');
+  }
 });

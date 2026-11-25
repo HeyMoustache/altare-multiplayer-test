@@ -41,8 +41,18 @@ export function createDuel({ code, seed }) {
     lastBattle: null,
     battleCount: 0,
     rematch: { w: false, b: false },
+    names: { w: '', b: '' },                     // the names players typed in
   };
 }
+
+// Player names: plain text, at most 20 characters, no control characters.
+export function cleanName(name, fallback) {
+  const clean = String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20);
+  return clean || fallback;
+}
+
+// Quick comms: a fixed set of messages, so there is no free typing to moderate.
+export const EMOTES = { wp: 'Well played!', ouch: 'Ouch!', gg: 'GG WP', oops: 'Oops!' };
 
 // In a plain duel there are no relics and no Momentum: both sides are equal.
 const ctxFor = (duel) => ({ pieceAt: (sq) => duel.pieces.get(sq) });
@@ -54,13 +64,14 @@ export function seatFor(duel, key) {
 
 // A player arrives. The first player gets a random side; the second gets the other.
 // Coming back with the same key puts you back in your own seat.
-export function joinDuel(duel, key, rand = Math.random) {
+export function joinDuel(duel, key, rand = Math.random, name = '') {
   const existing = seatFor(duel, key);
-  if (existing) return { seat: existing, rejoined: true };
+  if (existing) { if (name) duel.names[existing] = cleanName(name, duel.names[existing]); return { seat: existing, rejoined: true }; }
   const free = ['w', 'b'].filter((s) => !duel.seats[s]);
   if (!free.length) return { error: 'That duel already has two players.' };
   const seat = free.length === 2 ? (rand() < 0.5 ? 'w' : 'b') : free[0];
   duel.seats[seat] = key;
+  duel.names[seat] = cleanName(name, SIDE_NAME[seat] + ' player');
   return { seat, rejoined: false };
 }
 
@@ -127,6 +138,9 @@ function checkForEnd(duel) {
   duel.status = { over: true, winner, reason: kingGone ? `${SIDE_NAME[winner]} slew the enemy king.` : `Checkmate by ${SIDE_NAME[winner]}.` };
 }
 
+// Every action is numbered, so a browser can tell exactly which ones it has already shown.
+function record(duel, entry) { duel.history.push({ n: duel.history.length + 1, ...entry }); }
+
 // Handle one action from a player. Returns {error}, {duplicate:true}, or {ok:true, battle?}.
 // Every action must carry a unique `id`; an id that has been seen before is ignored,
 // so a double-tap or a resend after lag can never make two moves or roll two battles.
@@ -143,7 +157,7 @@ export function handleAction(duel, seat, msg) {
 
   if (msg.type === 'resign') {
     duel.status = { over: true, winner: otherSide(seat), reason: `${SIDE_NAME[seat]} resigned.` };
-    duel.history.push({ type: 'resign', seat });
+    record(duel, { type: 'resign', seat });
     return { ok: true };
   }
   if (duel.chess.turn() !== seat) return { error: "It isn't your turn." };
@@ -153,7 +167,7 @@ export function handleAction(duel, seat, msg) {
     if (!options.includes(msg.to)) return { error: "That bishop can't bless that piece." };
     duel.pieces.get(msg.from).blessUsed = true;
     duel.pieces.get(msg.to).blessed = true;
-    duel.history.push({ type: 'bless', seat, from: msg.from, to: msg.to });
+    record(duel, { type: 'bless', seat, from: msg.from, to: msg.to });
     return { ok: true };            // a Blessing doesn't use up your turn
   }
 
@@ -166,7 +180,7 @@ export function handleAction(duel, seat, msg) {
 
   if (!capture) {
     const done = R.applyMove({ chess: duel.chess, pieces: duel.pieces }, m);
-    duel.history.push({ type: 'move', seat, from: m.from, to: m.to });
+    record(duel, { type: 'move', seat, from: m.from, to: m.to });
     checkForEnd(duel);
     return { ok: true, promoted: done?.promoted || null };
   }
@@ -188,7 +202,7 @@ export function handleAction(duel, seat, msg) {
     promoted: applied.promoted || null,
   };
   duel.lastBattle = battle;
-  duel.history.push({ type: 'challenge', seat, from: m.from, to: m.to, result: battle.result });
+  record(duel, { type: 'challenge', seat, from: m.from, to: m.to, result: battle.result });
   checkForEnd(duel);
   return { ok: true, battle };
 }
@@ -204,6 +218,7 @@ function requestRematch(duel, seat) {
 export function rematchDuel(old, seed) {
   const duel = createDuel({ code: old.code, seed });
   duel.seats = { w: old.seats.b, b: old.seats.w };   // swap sides
+  duel.names = { w: old.names.b, b: old.names.w };
   return duel;
 }
 
@@ -217,9 +232,17 @@ export function stateFor(duel, seat, present = { w: false, b: false }) {
     you: seat,
     turn,
     pieces: [...duel.pieces].map(([square, p]) => ({
-      square, type: p.type, color: p.color, hp: p.hp, maxHp: p.maxHp,
+      square, id: p.id, home: p.home, type: p.type, color: p.color, hp: p.hp, maxHp: p.maxHp,
+      mightBuff: p.mightBuff || 0, guardBuff: p.guardBuff || 0, moves: p.moves || 0,
       blessed: Boolean(p.blessed), blessUsed: Boolean(p.blessUsed),
     })),
+    // The chess engine's own state, so the 3D game can rebuild the board exactly.
+    engine: {
+      side: duel.chess.side, ep: duel.chess.ep, halfmove: duel.chess.halfmove, fullmove: duel.chess.fullmove,
+      board: [...duel.chess.board].map(([square, p]) => ({ square, type: p.type, color: p.color, moved: Boolean(p.moved) })),
+    },
+    names: duel.names,
+    lastAction: duel.history[duel.history.length - 1] || null,
     check: !duel.status.over && duel.chess.isCheck(),
     legal: seat === turn ? legalMoves(duel) : [],
     bless: seat === turn && !duel.status.over && bothSeated(duel) ? blessOptions(duel, seat) : {},

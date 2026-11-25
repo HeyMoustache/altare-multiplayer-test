@@ -11,7 +11,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { createDuel, joinDuel, handleAction, stateFor, rematchDuel, bothSeated, makeCode } from './duel.js';
+import { createDuel, joinDuel, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
 
 // Altare tells us which port to use through the PORT variable.
 // On your own computer it falls back to 3000.
@@ -23,6 +23,8 @@ const RECONNECT_GRACE = 60_000;
 const EMPTY_ROOM_LIFETIME = 15 * 60_000;
 // Safety limit so the free server can't be flooded with rooms.
 const MAX_ROOMS = 500;
+// Nudges and quick comms can't be spammed: one nudge every 20 seconds, one quick message every 3.
+const NUDGE_GAP = 20_000, EMOTE_GAP = 3_000;
 
 // Which web pages may connect. The game's own site, this server's own test
 // page, and your computer while testing. Add more, comma-separated, in an
@@ -111,7 +113,7 @@ wss.on('connection', (ws) => {
       const room = rooms.get(code);
       if (!room) return send(ws, { type: 'error', message: 'There is no duel with that code. Check the link, or create a new duel.' });
       if (!key) return send(ws, { type: 'error', message: 'Missing player key.' });
-      const joined = joinDuel(room.duel, key);
+      const joined = joinDuel(room.duel, key, Math.random, typeof msg.name === 'string' ? msg.name : '');
       if (joined.error) return send(ws, { type: 'error', message: joined.error });
       const seat = joined.seat;
       // If this seat was already connected in another tab or an old connection, replace it.
@@ -127,6 +129,20 @@ wss.on('connection', (ws) => {
 
     const room = rooms.get(ws.roomCode);
     if (!room || room.sockets[ws.seat] !== ws) return;
+
+    // A nudge goes to the opponent only; a quick message pops up on both screens.
+    if (msg.type === 'nudge' || msg.type === 'emote') {
+      const now = Date.now(), gap = msg.type === 'nudge' ? NUDGE_GAP : EMOTE_GAP;
+      ws.lastSent = ws.lastSent || {};
+      if (now - (ws.lastSent[msg.type] || 0) < gap) return send(ws, { type: 'error', message: msg.type === 'nudge' ? 'You can nudge once every 20 seconds.' : 'Slow down a little!' });
+      if (msg.type === 'emote' && !EMOTES[msg.code]) return;
+      ws.lastSent[msg.type] = now;
+      const other = ws.seat === 'w' ? 'b' : 'w';
+      const out = { type: msg.type, from: ws.seat, name: room.duel.names[ws.seat], code: msg.code, text: EMOTES[msg.code] };
+      if (msg.type === 'nudge') send(room.sockets[other], out);
+      else for (const s of ['w', 'b']) send(room.sockets[s], out);
+      return;
+    }
 
     // Moves, attacks, blessings, resigning and rematches all go to the referee.
     if (['move', 'challenge', 'bless', 'resign', 'rematch'].includes(msg.type)) {

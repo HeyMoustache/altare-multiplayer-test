@@ -165,3 +165,14 @@ test('turn timer through the live server: the creator picks it and the turn pass
   assert.equal(s.timer, 30); assert.ok(s.turnLeft > 29_000 && s.turnLeft <= 30_000, 'the clock started when the second player sat down');
   for (const c of [a, b]) c.ws.close();
 });
+
+test('the server page forwards visitors (and old invite links) to the game', async (t) => {
+  const port = PORT + 29;
+  const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) }, cwd: new URL('..', import.meta.url) });
+  t.after(() => srv.kill());
+  await wait(600);
+  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+  assert.match(html, /https:\/\/martinsnelling\.com\/gambit\//);
+  assert.match(html, /q\.get\('duel'\) \|\| q\.get\('room'\)/);
+  assert.ok(!html.includes('WebSocket'), 'the old 2D test client is gone');
+});

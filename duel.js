@@ -86,7 +86,13 @@ export function checkTurnClock(duel, now = Date.now()) {
     duel.deadline = null;
     return true;
   }
+  // A skipped turn isn't a real move: it mustn't count towards "the same position three times"
+  // or the 50-turn rule, or two players who both walk away would end in a draw instead of a loss.
+  const halfmove = duel.chess.halfmove;
   duel.chess.pass();
+  duel.chess.halfmove = halfmove;
+  const key = duel.chess.key(), seen = duel.chess.positions.get(key) || 0;
+  if (seen > 1) duel.chess.positions.set(key, seen - 1); else duel.chess.positions.delete(key);
   record(duel, { type: 'timeout', seat, missed: duel.missed[seat] });
   checkForEnd(duel);
   startTurnClock(duel, now);

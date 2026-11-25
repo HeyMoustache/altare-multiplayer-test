@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fortune's Gambit · Duel test</title>
+<style>
+  :root { color-scheme: dark; --dawn:#a9dafa; --dusk:#f1a39b; --gold:#f2c14e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; font: 15px/1.45 system-ui, -apple-system, sans-serif; background: #17141d; color: #ece6ee; }
+  main { width: min(980px, 96vw); margin: 0 auto; padding: 18px 0 40px; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; }
+  .sub { color: #a89eaa; margin: 0 0 16px; font-size: .9rem; }
+  button, input { font: inherit; padding: .55rem .8rem; border-radius: 8px; border: 1px solid #4a3f52; background: #261f2e; color: inherit; }
+  button { cursor: pointer; } button:hover:not(:disabled) { background: #33293d; } button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #c99a33; border-color: #e6bd5e; color: #1b140a; font-weight: 700; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  #lobby { max-width: 420px; }
+  #lobby p { color: #a89eaa; }
+  input { text-transform: uppercase; width: 9em; }
+  .layout { display: grid; grid-template-columns: minmax(280px, 560px) 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+  #board { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 1; border: 2px solid #5a4a3a; border-radius: 6px; overflow: hidden; user-select: none; }
+  .sq { position: relative; display: grid; place-items: center; font-size: clamp(22px, 5.4vw, 44px); cursor: pointer; }
+  .sq.light { background: #e8d9b8; } .sq.dark { background: #a7835b; }
+  .sq.sel { box-shadow: inset 0 0 0 4px #3e8be0; }
+  .sq.last { box-shadow: inset 0 0 0 4px #f2c14e99; }
+  .sq .dot { position: absolute; width: 26%; height: 26%; border-radius: 50%; background: #2f9d55cc; }
+  .sq .ring { position: absolute; inset: 6%; border: 4px solid #e0312bdd; border-radius: 50%; }
+  .sq .bring { position: absolute; inset: 4%; border: 4px solid #f2c14e; border-radius: 50%; }
+  .pc { line-height: 1; text-shadow: 0 1px 0 #0006; }
+  .pc.w { color: #fff; -webkit-text-stroke: 1px #2a3d55; } .pc.b { color: #2b1b22; -webkit-text-stroke: 1px #f1a39b55; }
+  .hp { position: absolute; bottom: 1px; right: 3px; font-size: 10px; font-weight: 700; color: #1b140a; background: #fff8; padding: 0 3px; border-radius: 4px; }
+  .bl { position: absolute; top: 2px; right: 4px; font-size: 16px; font-weight: 800; color: #e0a400; text-shadow: 0 0 3px #fff; }
+  .coord { position: absolute; left: 3px; top: 1px; font-size: 9px; opacity: .55; color: #3b2a1a; }
+  .panel { background: #211b28; border: 1px solid #3d3346; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  #status { font-weight: 700; font-size: 1.05rem; }
+  .you-w { color: var(--dawn); } .you-b { color: var(--dusk); }
+  #players { color: #a89eaa; font-size: .9rem; margin-top: 4px; }
+  #odds h3 { margin: 0 0 6px; font-size: 1rem; }
+  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 6px 0; }
+  .bar i { display: block; } .bv { background: #f2c14e; } .br { background: #9b88c4; } .bs { background: #d0554e; }
+  .mods { margin: 6px 0; padding-left: 18px; color: #cfc3cf; font-size: .88rem; }
+  .warn { color: #f0aaa6; font-size: .88rem; }
+  #log { max-height: 260px; overflow-y: auto; font-size: .9rem; margin: 0; padding-left: 18px; }
+  #log li { margin-bottom: 4px; }
+  #share { word-break: break-all; color: #cfc3cf; font-size: .88rem; }
+  #ping { color: #8f8593; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  #err { color: #f0aaa6; min-height: 1.2em; font-size: .9rem; }
+  .hidden { display: none !important; }
+  .over { font-size: 1.1rem; font-weight: 800; color: var(--gold); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fortune's Gambit · Duel test</h1>
+  <p class="sub">A bare 2D board for testing the duel server. The server checks every move and rolls every battle.</p>
+
+  <section id="lobby" class="panel">
+    <div class="row"><button class="primary" id="createBtn">Create a duel</button></div>
+    <p>…or join one with a code:</p>
+    <div class="row"><input id="codeInput" maxlength="12" placeholder="CODE"><button id="joinBtn">Join</button></div>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="layout">
+      <div>
+        <div id="board"></div>
+        <div id="err"></div>
+      </div>
+      <div>
+        <div class="panel">
+          <div id="status">Connecting…</div>
+          <div id="players"></div>
+          <div id="overBox" class="hidden" style="margin-top:10px">
+            <div class="over" id="overText"></div>
+            <div class="row" style="margin-top:8px"><button class="primary" id="rematchBtn">Rematch (swap sides)</button></div>
+          </div>
+        </div>
+        <div class="panel hidden" id="odds"></div>
+        <div class="panel hidden" id="blessBox">
+          <div class="row"><button id="blessBtn">✦ Bless an ally</button><span id="blessHint" style="color:#a89eaa;font-size:.88rem"></span></div>
+        </div>
+        <div class="panel">
+          <strong>Battle log</strong>
+          <ol id="log"></ol>
+        </div>
+        <div class="panel">
+          <div id="share"></div>
+          <div class="row" style="margin-top:8px"><button id="resignBtn">Resign</button></div>
+          <div id="ping" style="margin-top:8px">Delay: –</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  // Connect back to whichever server sent this page.
+  const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const $ = (id) => document.getElementById(id);
+  const ICON = { k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟' };
+  const NAME = { k:'King', q:'Queen', r:'Rook', b:'Bishop', n:'Knight', p:'Pawn' };
+  const SIDE = { w:'Dawn', b:'Dusk' };
+  const FILES = 'abcdefgh';
+  let ws, room, state = null, selected = null, pending = null, blessFrom = null, wantCreate = false, retry = 0;
+  const pings = [];
+
+  // Each browser TAB keeps its own secret player key (so two tabs = two players while testing).
+  function keyFor(code) {
+    const k = 'fg-duel-key-' + code;
+    let key = sessionStorage.getItem(k);
+    if (!key) { key = crypto.randomUUID(); sessionStorage.setItem(k, key); }
+    return key;
+  }
+  // Every action gets a unique ID, so a double-tap or a resend can only count once.
+  const actionId = () => crypto.randomUUID();
+  function send(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+
+  $('createBtn').onclick = () => { wantCreate = true; connect(); };
+  $('joinBtn').onclick = () => { const c = $('codeInput').value.trim().toUpperCase(); if (c) enterRoom(c); };
+  // During a duel this button resigns. Once the duel is over, it becomes "Leave duel" and takes you back to the start.
+  $('resignBtn').onclick = () => {
+    if (state && state.status.over) return leaveDuel();
+    if (state && confirm('Resign this duel? Your opponent wins.')) send({ type:'resign', id: actionId() });
+  };
+  let leaving = false;
+  function leaveDuel() {
+    leaving = true; if (ws) ws.close();
+    room = null; state = null; selected = pending = blessFrom = null;
+    history.replaceState(null, '', location.pathname);
+    $('log').innerHTML = ''; $('game').classList.add('hidden'); $('lobby').classList.remove('hidden');
+  }
+  $('rematchBtn').onclick = () => { send({ type:'rematch' }); $('rematchBtn').disabled = true; $('rematchBtn').textContent = 'Waiting for your opponent…'; };
+  $('blessBtn').onclick = () => { blessFrom = blessFrom ? null : selected; render(); };
+
+  const fromLink = new URLSearchParams(location.search).get('duel');
+  if (fromLink) enterRoom(fromLink.toUpperCase());
+
+  function enterRoom(code) {
+    room = code;
+    history.replaceState(null, '', '?duel=' + code);
+    $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+    $('share').textContent = 'Invite link: ' + location.origin + location.pathname + '?duel=' + code;
+    connect();
+  }
+
+  function connect() {
+    if (ws && ws.readyState <= 1) { if (room) send({ type:'join', room, key: keyFor(room) }); else if (wantCreate) send({ type:'create' }); return; }
+    leaving = false;
+    const sock = ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      retry = 0;
+      if (room) send({ type:'join', room, key: keyFor(room) });
+      else if (wantCreate) send({ type:'create' });
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'pong') return recordPing(performance.now() - msg.t);
+      if (msg.type === 'created') { wantCreate = false; return enterRoom(msg.room); }
+      if (msg.type === 'error') { $('err').textContent = msg.message; setTimeout(() => $('err').textContent = '', 4000); return; }
+      if (msg.type === 'joined') { selected = pending = blessFrom = null; if (msg.rematch) { $('log').innerHTML = ''; addLog('Rematch! You are now ' + SIDE[msg.seat] + '.'); } return; }
+      if (msg.type === 'battle') return showBattle(msg);
+      if (msg.type === 'state') { state = msg; if (pending && !state.legal.some(m => m.from === pending.from && m.to === pending.to)) pending = null; render(); }
+    };
+    ws.onclose = (e) => {
+      if (leaving || sock !== ws) return;   // left on purpose, or an old connection: don't reconnect
+      if (e.code === 4000) { $('status').textContent = 'This duel is open in another tab.'; return; }
+      $('status').textContent = 'Connection lost – reconnecting…';
+      setTimeout(connect, Math.min(8000, 1000 * 2 ** retry++));   // wait a little longer each try
+    };
+  }
+
+  function showBattle(b) {
+    const who = `${SIDE[b.attacker.color]} ${NAME[b.attacker.type]}`, target = `${NAME[b.defender.type]} on ${b.defenderSquare}`;
+    const text = { victory: `${who} defeats the ${target}!${b.result.wound ? ' (wounded)' : ''}`,
+                   repelled: `${who} is repelled by the ${target}, and loses a wound.`,
+                   slain: `${who} is slain attacking the ${target}.` }[b.result.kind];
+    addLog(`⚔ ${text} (odds were ${b.odds.victory}% / ${b.odds.repelled}% / ${b.odds.slain}%)`);
+    if (b.promoted) addLog(`${SIDE[b.attacker.color]} pawn promoted to ${NAME[b.promoted]}!`);
+  }
+  function addLog(t) { const li = document.createElement('li'); li.textContent = t; $('log').prepend(li); }
+
+  function render() {
+    if (!state) return;
+    const me = state.you, myTurn = state.turn === me && !state.status.over;
+    // Status line
+    const opp = me === 'w' ? 'b' : 'w';
+    let s;
+    if (!state.players[opp].seated) s = 'Waiting for your opponent to open the invite link…';
+    else if (state.status.over) s = 'Duel over.';
+    else if (!state.players[opp].here) s = 'Your opponent has disconnected. Waiting up to 60 seconds for them…';
+    else s = myTurn ? 'Your turn.' : `${SIDE[state.turn]} is thinking…`;
+    if (state.check && !state.status.over) s += state.turn === me ? ' Your king is in check!' : ' Their king is in check.';
+    $('status').innerHTML = `You are <span class="you-${me}">${SIDE[me]}</span>. ${s}`;
+    $('players').textContent = `Dawn: ${state.players.w.here ? 'here' : state.players.w.seated ? 'away' : 'empty'} · Dusk: ${state.players.b.here ? 'here' : state.players.b.seated ? 'away' : 'empty'} · Actions so far: ${state.moveCount}`;
+    // Game over
+    $('overBox').classList.toggle('hidden', !state.status.over);
+    $('resignBtn').textContent = state.status.over ? 'Leave duel' : 'Resign';
+    if (state.status.over) {
+      const res = state.status.winner ? (state.status.winner === me ? 'You win! ' : 'You lose. ') : '';
+      $('overText').textContent = res + state.status.reason + (state.seed ? ` (dice seed ${state.seed})` : '');
+      const asked = state.rematch[me];
+      $('rematchBtn').disabled = asked; $('rematchBtn').textContent = asked ? 'Waiting for your opponent…' : (state.rematch[opp] ? 'Your opponent wants a rematch!' : 'Rematch (swap sides)');
+    }
+    // Board, Dawn at the bottom for Dawn, Dusk at the bottom for Dusk.
+    const at = new Map(state.pieces.map(p => [p.square, p]));
+    const myMoves = selected ? state.legal.filter(m => m.from === selected) : [];
+    const blessTargets = blessFrom ? (state.bless[blessFrom] || []) : [];
+    const last = state.lastBattle;
+    const board = $('board'); board.innerHTML = '';
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const rank = me === 'w' ? 8 - row : row + 1, file = me === 'w' ? col : 7 - col;
+      const sq = FILES[file] + rank, p = at.get(sq);
+      const cell = document.createElement('div');
+      cell.className = `sq ${(file + rank) % 2 ? 'dark' : 'light'}${sq === selected ? ' sel' : ''}${last && (sq === last.to || sq === last.from) ? ' last' : ''}`;
+      if (col === 0) cell.innerHTML += `<span class="coord">${rank}</span>`;
+      if (p) cell.innerHTML += `<span class="pc ${p.color}">${ICON[p.type]}</span>${p.maxHp > 1 ? `<span class="hp">♥${p.hp}</span>` : ''}${p.blessed ? '<span class="bl">✦</span>' : ''}`;
+      const mv = myMoves.find(m => m.to === sq);
+      if (mv) cell.innerHTML += mv.capture ? '<span class="ring"></span>' : '<span class="dot"></span>';
+      if (blessTargets.includes(sq)) cell.innerHTML += '<span class="bring"></span>';
+      cell.onclick = () => clickSquare(sq, p, myTurn);
+      board.appendChild(cell);
+    }
+    // Bless button
+    const canBless = myTurn && selected && state.bless[selected];
+    $('blessBox').classList.toggle('hidden', !canBless);
+    if (canBless) { $('blessBtn').textContent = blessFrom ? 'Cancel blessing' : '✦ Bless an ally'; $('blessHint').textContent = blessFrom ? 'Click a gold-ringed ally.' : '+20% in its next battle. Free: doesn’t use your turn.'; }
+    renderOdds();
+  }
+
+  function clickSquare(sq, p, myTurn) {
+    if (!myTurn) return;
+    if (blessFrom) {
+      if ((state.bless[blessFrom] || []).includes(sq)) send({ type:'bless', from: blessFrom, to: sq, id: actionId() });
+      blessFrom = null; return render();
+    }
+    const mv = selected && state.legal.find(m => m.from === selected && m.to === sq);
+    if (mv) {
+      if (mv.capture) { pending = mv; return render(); }       // show the odds first
+      send({ type:'move', from: mv.from, to: mv.to, id: actionId() });
+      selected = pending = null; return render();
+    }
+    selected = p && p.color === state.you ? sq : null; pending = null; render();
+  }
+
+  function renderOdds() {
+    const box = $('odds');
+    if (!pending || !pending.odds) { box.classList.add('hidden'); return; }
+    const o = pending.odds;
+    const att = state.pieces.find(p => p.square === pending.from), def = state.pieces.find(p => p.square === o.defenderSquare);
+    box.classList.remove('hidden');
+    box.innerHTML = `<h3>${NAME[att.type]} ⚔ ${NAME[def.type]}${o.enPassant ? ' (en passant)' : ''}</h3>
+      <div class="bar"><i class="bv" style="width:${o.victory}%"></i><i class="br" style="width:${o.repelled}%"></i><i class="bs" style="width:${o.slain}%"></i></div>
+      <div><b>${o.victory}%</b> victory · <b>${o.repelled}%</b> repelled · <b>${o.slain}%</b> slain</div>
+      <ul class="mods"><li>Might ${o.might} vs Guard ${o.guard}: ${o.base}% base</li>${o.adjustments.map(a => `<li>${a.name} ${a.amount > 0 ? '+' : '−'}${Math.abs(a.amount)}%</li>`).join('')}${o.winWound ? `<li>Wound even if you win: ${o.winWound}%</li>` : ''}</ul>
+      ${o.lastWound ? '<div class="warn">Last wound: if this attack fails, the attacker is slain.</div>' : ''}
+      ${o.kingWarning ? '<div class="warn">If this attack fails, your king stays in check.</div>' : ''}
+      <div class="row" style="margin-top:8px"><button class="primary" id="attackBtn">Attack!</button><button id="cancelBtn">Cancel</button></div>`;
+    $('attackBtn').onclick = (ev) => { ev.target.disabled = true; send({ type:'challenge', from: pending.from, to: pending.to, id: actionId() }); selected = pending = null; render(); };
+    $('cancelBtn').onclick = () => { pending = null; render(); };
+  }
+
+  // Delay meter: send the time, the server sends it straight back.
+  function recordPing(ms) {
+    pings.push(ms); if (pings.length > 10) pings.shift();
+    const avg = Math.round(pings.reduce((a, b) => a + b, 0) / pings.length);
+    $('ping').textContent = `Delay: ${Math.round(ms)} ms (average ${avg} ms)`;
+  }
+  setInterval(() => send({ type:'ping', t: performance.now() }), 2000);
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 // Tests for the duel referee. Run them with:  npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions } from '../duel.js';
+import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions, startTurnClock, checkTurnClock, cleanTimer } from '../duel.js';
 
 let n = 0; const id = () => 'id-' + (++n);
 function seated(seed = 'test') {
@@ -134,4 +134,44 @@ test('state carries the engine snapshot and numbered actions for the 3D game', (
   assert.ok(s.engine.board.find((p) => p.square === 'e4').moved);
   assert.deepEqual([s.lastAction.n, s.lastAction.type, s.lastAction.from, s.lastAction.to], [1, 'move', 'e2', 'e4']);
   assert.ok(s.pieces.every((p) => p.id && p.home));
+});
+
+test('turn timer: off by default, only the allowed lengths', () => {
+  assert.equal(createDuel({ code: 'X', seed: 's' }).timer, 0);
+  assert.equal(cleanTimer(60), 60); assert.equal(cleanTimer('120'), 120); assert.equal(cleanTimer(5), 0); assert.equal(cleanTimer('lots'), 0);
+  const d = createDuel({ code: 'X', seed: 's' }); joinDuel(d, 'key-one-111'); joinDuel(d, 'key-two-222'); startTurnClock(d, 1000);
+  assert.equal(d.deadline, null, 'no timer, no clock');
+  assert.equal(checkTurnClock(d, 1e12), false);
+});
+
+test('turn timer: running out skips your turn; a move resets the count; three in a row loses', () => {
+  const duel = createDuel({ code: 'T', seed: 'clock', timer: 30 });
+  joinDuel(duel, 'key-alice-1', () => 0.1); joinDuel(duel, 'key-bob-22');
+  startTurnClock(duel, 0);
+  assert.equal(duel.deadline, 30_000);
+  assert.equal(checkTurnClock(duel, 29_999), false, 'not yet');
+  assert.equal(checkTurnClock(duel, 30_000), true);
+  assert.equal(duel.chess.turn(), 'b', "Dawn's turn was skipped");
+  assert.equal(duel.missed.w, 1);
+  assert.equal(duel.history.at(-1).type, 'timeout');
+  assert.equal(duel.deadline, 60_000, "Dusk's clock starts straight away");
+
+  // Dusk moves (the real clock is used here), which resets Dusk's count and restarts the clock for Dawn.
+  duel.missed.b = 2;
+  assert.ok(handleAction(duel, 'b', { type: 'move', from: 'e7', to: 'e5', id: id() }).ok);
+  assert.equal(duel.missed.b, 0); assert.ok(duel.deadline > Date.now());
+
+  // Dawn runs out twice more: three in a row, so Dawn loses.
+  let t = duel.deadline;
+  checkTurnClock(duel, t);                     // Dawn misses (2)
+  t = duel.deadline; checkTurnClock(duel, t);  // Dusk misses (1)
+  t = duel.deadline; checkTurnClock(duel, t);  // Dawn misses (3) -> loses
+  assert.equal(duel.status.over, true); assert.equal(duel.status.winner, 'b');
+  assert.match(duel.status.reason, /ran out of time 3 turns in a row/);
+  assert.equal(duel.deadline, null);
+  const s = stateFor(duel, 'w'); assert.equal(s.timer, 30); assert.equal(s.turnLeft, null);
+
+  // A rematch keeps the same timer.
+  duel.rematch = { w: true, b: true };
+  assert.equal(rematchDuel(duel, 'next').timer, 30);
 });

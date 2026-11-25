@@ -144,3 +144,24 @@ test('a third person watches: sees the board and battles, can react, but cannot 
   const after = await a.next('state'); assert.equal(after.watchers, 0);
   for (const c of [a, b]) c.ws.close();
 });
+
+test('turn timer through the live server: the creator picks it and the turn passes on', async (t) => {
+  const port = PORT + 23, u = `ws://127.0.0.1:${port}`;
+  const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) }, cwd: new URL('..', import.meta.url) });
+  t.after(() => srv.kill());
+  await wait(600);
+  const at = () => { const ws = new WebSocket(u); const inbox = []; ws.on('message', (d) => inbox.push(JSON.parse(d)));
+    const next = async (type, tries = 100) => { for (let i = 0; i < tries; i++) { const k = inbox.findIndex((m) => m.type === type); if (k >= 0) return inbox.splice(k, 1)[0]; await wait(20); } throw new Error('no ' + type); };
+    return { ws, inbox, next, opened: new Promise((r) => ws.on('open', r)), send: (m) => ws.send(JSON.stringify(m)) }; };
+  const a = at(), b = at(); await a.opened; await b.opened;
+  a.send({ type: 'create', timer: 999 });               // not an allowed length -> off
+  assert.equal((await a.next('created')).timer, 0);
+  a.send({ type: 'create', timer: 30 });
+  const { room, timer } = await a.next('created'); assert.equal(timer, 30);
+  a.send({ type: 'join', room, key: 'alice-key-1' }); await a.next('joined');
+  b.send({ type: 'join', room, key: 'bob-key-123' }); await b.next('joined');
+  await wait(100);
+  const s = a.inbox.filter((m) => m.type === 'state').pop();
+  assert.equal(s.timer, 30); assert.ok(s.turnLeft > 29_000 && s.turnLeft <= 30_000, 'the clock started when the second player sat down');
+  for (const c of [a, b]) c.ws.close();
+});

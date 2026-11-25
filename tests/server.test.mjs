@@ -52,3 +52,24 @@ test('two players can create, join and play through the live server', async (t) 
   await assert.rejects(stranger.opened);
   for (const c of [a, b]) c.ws.close();
 });
+
+test('nudges reach the opponent only; quick messages reach both; both are rate-limited', async (t) => {
+  const port = PORT + 7, u = `ws://127.0.0.1:${port}`;
+  const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) }, cwd: new URL('..', import.meta.url) });
+  t.after(() => srv.kill());
+  await wait(600);
+  const mk = () => { const ws = new WebSocket(u); const inbox = []; ws.on('message', (d) => inbox.push(JSON.parse(d))); return { ws, inbox, opened: new Promise((r) => ws.on('open', r)), send: (m) => ws.send(JSON.stringify(m)) }; };
+  const a = mk(), b = mk(); await a.opened; await b.opened;
+  a.send({ type: 'create' }); await wait(150);
+  const room = a.inbox.find((m) => m.type === 'created').room;
+  a.send({ type: 'join', room, key: 'key-alice-123', name: 'Alice' }); b.send({ type: 'join', room, key: 'key-bob-45678', name: 'Bob' }); await wait(200);
+  assert.deepEqual(Object.values(b.inbox.filter((m) => m.type === 'state').pop().names).sort(), ['Alice', 'Bob']);
+  a.inbox.length = 0; b.inbox.length = 0;
+  a.send({ type: 'nudge' }); a.send({ type: 'nudge' }); a.send({ type: 'emote', code: 'gg' }); a.send({ type: 'emote', code: 'swear' });
+  await wait(200);
+  assert.equal(b.inbox.filter((m) => m.type === 'nudge').length, 1, 'one nudge arrives; the second is too soon');
+  assert.equal(a.inbox.filter((m) => m.type === 'nudge').length, 0, 'you do not nudge yourself');
+  assert.equal(a.inbox.filter((m) => m.type === 'emote' && m.text === 'GG WP').length, 1);
+  assert.equal(b.inbox.filter((m) => m.type === 'emote').length, 1, 'unknown quick messages are dropped');
+  a.ws.close(); b.ws.close();
+});

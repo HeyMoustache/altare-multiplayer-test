@@ -113,3 +113,25 @@ test('each player only gets legal moves on their own turn, and the seed stays se
   assert.equal(stateFor(duel, b).legal.length, 0);
   assert.equal(stateFor(duel, w).seed, undefined);
 });
+
+test('names are cleaned, kept per seat, and swap with the sides on a rematch', async () => {
+  const { cleanName } = await import('../duel.js');
+  assert.equal(cleanName('  <b>Martin</b>\n ', 'x'), 'bMartin/b');
+  assert.equal(cleanName('', 'Dawn player'), 'Dawn player');
+  assert.equal(cleanName('A'.repeat(40), 'x').length, 20);
+  const duel = createDuel({ code: 'ABCDE', seed: 's' });
+  const a = joinDuel(duel, 'key-alice-1', () => 0.1, 'Alice'), b = joinDuel(duel, 'key-bob-22', Math.random, 'Bob');
+  assert.equal(duel.names[a.seat], 'Alice'); assert.equal(duel.names[b.seat], 'Bob');
+  const next = rematchDuel(duel, 'n');
+  assert.equal(next.names[b.seat === 'w' ? 'b' : 'w'], 'Bob');
+});
+
+test('state carries the engine snapshot and numbered actions for the 3D game', () => {
+  const { duel, w } = seated();
+  play(duel, w, 'e2', 'e4');
+  const s = stateFor(duel, w);
+  assert.equal(s.engine.side, 'b'); assert.equal(s.engine.ep, 'e3');
+  assert.ok(s.engine.board.find((p) => p.square === 'e4').moved);
+  assert.deepEqual([s.lastAction.n, s.lastAction.type, s.lastAction.from, s.lastAction.to], [1, 'move', 'e2', 'e4']);
+  assert.ok(s.pieces.every((p) => p.id && p.home));
+});

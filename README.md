@@ -9,16 +9,14 @@ Runs on Altare at **https://gambit.martinsnelling.com**. Two players share an in
 | `server.js` | The web server and live connections: rooms, invite codes, reconnecting, who is allowed to connect |
 | `duel.js` | The referee for one duel: turns, legal moves, battles, blessings, wins, resigning, rematches |
 | `rules.js` | **An exact copy of the game's `rules.js`.** When you change a rule in the game, copy the new `rules.js` here too |
-| `index.html` | A bare 2D test page, so you can play a duel in two browser tabs |
+| `index.html` | A small page that sends anyone who visits the server (or an old invite link) to the game at martinsnelling.com/gambit |
 | `tests/` | Automatic checks. Run `npm test` |
 
 ## Trying it
 
-1. Open https://gambit.martinsnelling.com and press **Create a duel**.
-2. Copy the invite link into a second tab or another device, and open it.
-3. Play. Click a piece, then a green dot to move, or a red ring to see the odds and attack.
+Duels are played in the game: open https://martinsnelling.com/gambit, choose **Duel a friend**, and send the invite link to a second tab or another device. Each browser tab is its own player, so two tabs on one computer can play each other.
 
-Each browser tab is its own player, so two tabs on one computer can play each other.
+The old 2D test page has retired. Visiting https://gambit.martinsnelling.com now forwards you to the game, and an old invite link (`?room=CODE` or `?duel=CODE`) opens that duel in the game.
 
 ## Rules of a plain duel
 
@@ -32,7 +30,7 @@ Each browser tab is its own player, so two tabs on one computer can play each ot
 
 ## Draft duels
 
-- `create` can carry `mode`: `'draft'` or `'plain'`. Anything else (including no mode, like the 2D test page) is a plain duel.
+- `create` can carry `mode`: `'draft'` or `'plain'`. Anything else (including no mode) is a plain duel.
 - In a draft, the duel's seed deals 3 boons from `DUEL_BOONS` in `rules.js`. Each player sends `{type:'pick', boons:[two of them], id}` once. Moves are refused, and the turn timer waits, until both have picked.
 - Each `state` has `mode`, `draft: {offer, picked, picks}` (you only see your own picks until both have chosen) and `momentum` (Battle Fervour streaks).
 - The boons act like relics in the battle odds, so the server and both browsers always agree.

@@ -1,7 +1,7 @@
 // ------------------------------------------------------------
 //  Fortune's Gambit duel server (runs on Altare)
-//  - Serves a bare 2D test page (index.html) so you can try duels
-//    in two browser tabs
+//  - Serves a small page (index.html) that sends visitors to the game
+//    (the old 2D test page has retired: duels are played in the 3D game)
 //  - Runs the WebSocket (live connection) server
 //  - Acts as the referee: checks every move and rolls every battle
 //    (the duel rules are in duel.js, the game rules in rules.js)
@@ -47,7 +47,7 @@ function originAllowed(origin, host) {
   return false;
 }
 
-// ---------- 1. A normal web server for the test page ----------
+// ---------- 1. A normal web server for /health and the forwarding page ----------
 const server = http.createServer(async (req, res) => {
   const path = (req.url || '/').split('?')[0];
   if (path === '/health') {

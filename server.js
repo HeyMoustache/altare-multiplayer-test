@@ -116,8 +116,8 @@ wss.on('connection', (ws) => {
       if (rooms.size >= MAX_ROOMS) return send(ws, { type: 'error', message: 'The server is busy. Please try again later.' });
       let code;
       do { code = makeCode(); } while (rooms.has(code));
-      rooms.set(code, { duel: createDuel({ code, seed: newSeed(), timer: msg.timer }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
-      return send(ws, { type: 'created', room: code, timer: rooms.get(code).duel.timer });
+      rooms.set(code, { duel: createDuel({ code, seed: newSeed(), timer: msg.timer, mode: msg.mode }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
+      return send(ws, { type: 'created', room: code, timer: rooms.get(code).duel.timer, mode: rooms.get(code).duel.mode });
     }
 
     // Join (or rejoin) a duel. The key is the browser's secret ticket for its seat.
@@ -186,7 +186,7 @@ wss.on('connection', (ws) => {
     }
 
     // Moves, attacks, blessings, resigning and rematches all go to the referee.
-    if (['move', 'challenge', 'bless', 'resign', 'rematch'].includes(msg.type)) {
+    if (['move', 'challenge', 'bless', 'pick', 'resign', 'rematch'].includes(msg.type)) {
       const outcome = handleAction(room.duel, ws.seat, msg);
       if (outcome.duplicate) return; // already handled this exact action
       if (outcome.error) {

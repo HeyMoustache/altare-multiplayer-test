@@ -30,7 +30,12 @@ export const MAX_MISSED = 3;
 export const cleanTimer = (t) => (TIMER_CHOICES.includes(Number(t)) ? Number(t) : 0);
 
 // A brand-new duel: the standard starting army for both sides, no relics.
-export function createDuel({ code, seed, timer = 0 }) {
+export const DUEL_MODES = ['draft', 'plain'];
+// The game's lobby asks for 'draft' by default; anything that doesn't say (like the old 2D
+// test page) gets a plain duel.
+export const cleanMode = (m) => (DUEL_MODES.includes(m) ? m : 'plain');
+
+export function createDuel({ code, seed, timer = 0, mode = 'plain' }) {
   const chess = new R.BattleChess();
   const pieces = new Map();
   for (const [square, p] of chess.board) pieces.set(square, R.makePiece(p.type, p.color, square));
@@ -51,13 +56,21 @@ export function createDuel({ code, seed, timer = 0 }) {
     timer: cleanTimer(timer),                    // seconds per turn (0 = off)
     deadline: null,                              // when the current turn runs out (ms clock), or null
     missed: { w: 0, b: 0 },                      // turns in a row each side has run out of time
+    mode: cleanMode(mode),                       // 'draft' (pick boons first) or 'plain'
+    // Draft duels: both players are offered the same boons and each picks some before play starts.
+    draft: cleanMode(mode) === 'draft' ? { offer: R.dealBoons(R.makeRng(R.hashSeed('boons:' + seed))), picks: { w: null, b: null } } : null,
+    momentum: { w: 0, b: 0 },                    // Battle Fervour streaks (only counted for a side that picked it)
   };
 }
+
+// Still choosing boons? Nobody can move until both players have picked.
+export const inDraft = (duel) => Boolean(duel.draft && !(duel.draft.picks.w && duel.draft.picks.b));
+const boonsOf = (duel, color) => new Set(!inDraft(duel) && duel.draft?.picks[color] || []);
 
 // Start (or restart) the clock for whoever's turn it is now. The clock only runs
 // once both players are in and the duel isn't over.
 export function startTurnClock(duel, now = Date.now()) {
-  duel.deadline = duel.timer && bothSeated(duel) && !duel.status.over ? now + duel.timer * 1000 : null;
+  duel.deadline = duel.timer && bothSeated(duel) && !duel.status.over && !inDraft(duel) ? now + duel.timer * 1000 : null;
 }
 
 // Called by the server when the clock may have run out. If it has, the turn passes
@@ -90,7 +103,11 @@ export function cleanName(name, fallback) {
 export const EMOTES = { wp: 'Well played!', ouch: 'Ouch!', gg: 'GG WP', oops: 'Oops!' };
 
 // In a plain duel there are no relics and no Momentum: both sides are equal.
-const ctxFor = (duel) => ({ pieceAt: (sq) => duel.pieces.get(sq) });
+const ctxFor = (duel) => ({
+  pieceAt: (sq) => duel.pieces.get(sq),
+  relics: (color) => boonsOf(duel, color),
+  momentum: (color) => (boonsOf(duel, color).has('fervour') ? duel.momentum[color] : 0),
+});
 
 export function seatFor(duel, key) {
   if (!key) return null;
@@ -196,6 +213,16 @@ export function handleAction(duel, seat, msg) {
     duel.deadline = null;
     return { ok: true };
   }
+  if (msg.type === 'pick') {
+    if (!inDraft(duel)) return { error: 'The boons have already been chosen.' };
+    if (duel.draft.picks[seat]) return { error: "You've already chosen your boons." };
+    const picks = Array.isArray(msg.boons) ? msg.boons.map(String) : [];
+    if (!R.validBoonPick(duel.draft.offer, picks)) return { error: `Choose ${R.BOON_PICKS} different boons from the ${R.BOON_OFFER} offered.` };
+    duel.draft.picks[seat] = picks;
+    if (!inDraft(duel)) { record(duel, { type: 'draft', picks: duel.draft.picks }); startTurnClock(duel); }
+    return { ok: true };
+  }
+  if (inDraft(duel)) return { error: 'Choose your boons first.' };
   if (duel.chess.turn() !== seat) return { error: "It isn't your turn." };
 
   if (msg.type === 'bless') {
@@ -227,6 +254,9 @@ export function handleAction(duel, seat, msg) {
   const attacker = duel.pieces.get(m.from), defender = duel.pieces.get(R.defenderSquare(m));
   const f = R.battleForecast(m, ctxFor(duel));
   const result = R.rollBattle(f, duel.rng);
+  // Battle Fervour (Momentum), worked out exactly as single player does for Dawn.
+  const prev = duel.momentum[attacker.color];
+  duel.momentum[attacker.color] = prev >= 3 ? 0 : R.nextMomentumStreak(prev, f.chance, result.kind);
   const applied = R.applyBattle({ chess: duel.chess, pieces: duel.pieces }, m, result);
   duel.battleCount++;
   const battle = {
@@ -254,7 +284,7 @@ function requestRematch(duel, seat) {
 }
 
 export function rematchDuel(old, seed) {
-  const duel = createDuel({ code: old.code, seed, timer: old.timer });
+  const duel = createDuel({ code: old.code, seed, timer: old.timer, mode: old.mode });
   duel.seats = { w: old.seats.b, b: old.seats.w };   // swap sides
   duel.names = { w: old.names.b, b: old.names.w };
   startTurnClock(duel);
@@ -292,6 +322,14 @@ export function stateFor(duel, seat, present = { w: false, b: false }) {
     timer: duel.timer,                                                     // seconds per turn, 0 = off
     turnLeft: duel.deadline ? Math.max(0, duel.deadline - Date.now()) : null, // ms left this turn
     missed: duel.missed,
+    mode: duel.mode,
+    // Each player only sees their own picks until both have chosen; then everyone sees both.
+    draft: duel.draft ? {
+      offer: duel.draft.offer,
+      picked: { w: Boolean(duel.draft.picks.w), b: Boolean(duel.draft.picks.b) },
+      picks: inDraft(duel) ? { w: seat === 'w' ? duel.draft.picks.w : null, b: seat === 'b' ? duel.draft.picks.b : null } : duel.draft.picks,
+    } : null,
+    momentum: { w: boonsOf(duel, 'w').has('fervour') ? duel.momentum.w : 0, b: boonsOf(duel, 'b').has('fervour') ? duel.momentum.b : 0 },
     moveCount: duel.history.length,
     seed: duel.status.over ? duel.seed : undefined,   // revealed at the end, so a duel can be replayed
   };

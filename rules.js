@@ -270,6 +270,28 @@ export const RELICS = {
   bulwark:{icon:'🛡',name:'Iron Bulwark',desc:'Every piece in your army gets +1 Guard'},
   mercy:{icon:'✦',name:'Field Surgeon',desc:'Heals one wound on every survivor'}
 };
+/* Duel boons (v2.28, draft duels only). The server deals BOON_OFFER of these to both players,
+   and each picks BOON_PICKS. They work like relics: ctx.relics(color) holds the picked names. */
+export const DUEL_BOONS = {
+  whetstone:{name:'Whetstone',desc:'Knights get +10% when attacking.'},
+  siege:{name:'Siege Oil',desc:'Rooks get +10% when attacking.'},
+  pilgrim:{name:"Pilgrim's Blade",desc:'Bishops get +10% when attacking.'},
+  favour:{name:"Queen's Favour",desc:'Your queen gets +10% when attacking.'},
+  pikewall:{name:'Pike Wall',desc:'Pawns get +1 Guard.'},
+  royalguard:{name:'Royal Guard',desc:'Your king gets +2 Guard.'},
+  fervour:{name:'Battle Fervour',desc:'Momentum: if three of your attacks in a row fail when the odds were 60% or better, your next attack gets +10%.'}
+};
+export const BOON_OFFER=3, BOON_PICKS=2;
+/* Deal `n` different boons using a seeded dice stream, so the same seed always deals the same boons. */
+export function dealBoons(rng,n=BOON_OFFER){
+  const pool=Object.keys(DUEL_BOONS);
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]]}
+  return pool.slice(0,n);
+}
+/* A valid pick: exactly BOON_PICKS different boons, all from the offer. */
+export function validBoonPick(offer,picks){
+  return Array.isArray(picks)&&picks.length===BOON_PICKS&&new Set(picks).size===BOON_PICKS&&picks.every(b=>offer.includes(b));
+}
 export function makePiece(type,color,home){return {id:`${color}-${home}`,home,color,type,hp:STATS[type].hp,maxHp:STATS[type].hp,mightBuff:0,guardBuff:0,moves:0,blessUsed:false,blessed:false}}
 
 /* ===== 5. Battle odds for a real board position =====
@@ -287,6 +309,8 @@ export function pieceStats(square,ctx){
   const p=ctx.pieceAt(square);if(!p)return {might:0,guard:0,hp:0,nerve:0};
   const base=STATS[p.type];let guard=base.guard+p.guardBuff-(p.maxHp-p.hp);
   if(relicsOf(ctx,p.color).has('bulwark'))guard+=1;
+  if(p.type==='p'&&relicsOf(ctx,p.color).has('pikewall'))guard+=1;   // duel boon
+  if(p.type==='k'&&relicsOf(ctx,p.color).has('royalguard'))guard+=2; // duel boon
   if(p.type==='r'&&p.moves===0)guard+=2;
   // v2.12 Shield Wall: +1 Guard if at least one allied pawn stands beside it (no longer +1 per pawn).
   if(p.type==='p'){
@@ -306,10 +330,13 @@ export function battleForecast(m,ctx){
   // v2.11: Charge only when the knight leaps over a piece on its way to the target.
   if(atk.type==='n'&&knightJumpsOver(m.from,m.to,s=>Boolean(ctx.pieceAt(s))))add('Knight Charge',.15);
   if(atk.type==='n'&&relicsOf(ctx,atk.color).has('whetstone'))add('Whetstone',.10);
+  if(atk.type==='r'&&relicsOf(ctx,atk.color).has('siege'))add('Siege Oil',.10);
+  if(atk.type==='b'&&relicsOf(ctx,atk.color).has('pilgrim'))add("Pilgrim's Blade",.10);
   if(def.type==='k')add('King Last Stand',-.25);
   if(atk.blessed)add('Blessing',.20);
   if(def.blessed)add('Defender blessed',-.20);
   if(atk.type==='q'&&chance<.40){adjustments.push({name:'Queen Command (40% floor)',amount:.40-chance});chance=.40}
+  if(atk.type==='q'&&relicsOf(ctx,atk.color).has('favour'))add("Queen's Favour",.10); // after the floor, so it always helps
   if((ctx.momentum?.(atk.color)||0)>=3)add('Momentum',.10);
   chance=clamp(chance,.05,.95);
   const counter=clamp(rawChance(d.might,a.guard)-a.nerve*.03,.05,.95);

@@ -102,3 +102,45 @@ test('a closed tab can get its seat back; a seat still in use cannot be taken', 
   assert.equal(back.seat, ja.seat); assert.equal(back.key, 'alice-tab-one'); assert.equal(back.rejoined, true);
   for (const c of [a3, b]) c.ws.close();
 });
+
+test('a third person watches: sees the board and battles, can react, but cannot play', async (t) => {
+  const port = PORT + 19, u = `ws://127.0.0.1:${port}`;
+  const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) }, cwd: new URL('..', import.meta.url) });
+  t.after(() => srv.kill());
+  await wait(600);
+  const at = () => { const ws = new WebSocket(u); const inbox = []; ws.on('message', (d) => inbox.push(JSON.parse(d)));
+    const next = async (type) => { for (let i = 0; i < 100; i++) { const k = inbox.findIndex((m) => m.type === type); if (k >= 0) return inbox.splice(k, 1)[0]; await wait(20); } throw new Error('no ' + type); };
+    return { ws, inbox, next, opened: new Promise((r) => ws.on('open', r)), send: (m) => ws.send(JSON.stringify(m)) }; };
+  const a = at(), b = at(), v = at(); await a.opened; await b.opened; await v.opened;
+  a.send({ type: 'create' }); const { room } = await a.next('created');
+  a.send({ type: 'join', room, key: 'alice-key-1', name: 'Alice' }); const ja = await a.next('joined');
+  b.send({ type: 'join', room, key: 'bob-key-123', name: 'Bob' }); await b.next('joined');
+  v.send({ type: 'join', room, key: 'viv-key-123', name: 'Viv' });
+  const jv = await v.next('joined');
+  assert.equal(jv.watching, true); assert.equal(jv.seat, null); assert.equal(jv.key, undefined);
+  const sv = await v.next('state');
+  assert.equal(sv.you, null); assert.deepEqual(sv.legal, []); assert.equal(sv.watchers, 1);
+  assert.equal(sv.names.w === 'Alice' || sv.names.b === 'Alice', true);
+  await wait(100); for (const c of [a, b, v]) c.inbox.length = 0;
+
+  // The watcher can't move, even on the right turn.
+  v.send({ type: 'move', from: 'e2', to: 'e4', id: 'v1' }); v.send({ type: 'resign', id: 'v2' });
+  await wait(200); assert.equal(v.inbox.filter((m) => m.type === 'state').length, 0, 'nothing happened');
+
+  const white = ja.seat === 'w' ? a : b, black = white === a ? b : a;
+  white.send({ type: 'move', from: 'e2', to: 'e4', id: 'm1' }); await v.next('state');
+  black.send({ type: 'move', from: 'd7', to: 'd5', id: 'm2' }); await v.next('state');
+  white.send({ type: 'challenge', from: 'e4', to: 'd5', id: 'm3' });
+  const bw = await white.next('battle'), bv = await v.next('battle');
+  assert.deepEqual(bw.result, bv.result, 'the watcher sees the same battle');
+
+  // A reaction from the watcher reaches everyone, with their name.
+  v.send({ type: 'emote', code: 'gg' });
+  const e = await a.next('emote'); assert.equal(e.from, 'watch'); assert.equal(e.name, 'Viv');
+
+  // When the watcher leaves, the players see the count drop.
+  await wait(100); a.inbox.length = 0;
+  v.ws.close();
+  const after = await a.next('state'); assert.equal(after.watchers, 0);
+  for (const c of [a, b]) c.ws.close();
+});

@@ -248,3 +248,15 @@ test('boons: Siege Oil, Pilgrim\'s Blade and Queen\'s Favour add 10% to their pi
     assert.ok(boosted.adjustments.some((a) => a.name === DUEL_BOONS[boon].name), boon + ' is listed in the forecast');
   }
 });
+
+test('turn timer: skipped turns never count as a repeated position, so walking away loses rather than draws', () => {
+  for (const opening of [[], [['w', 'g1', 'f3']], [['w', 'e2', 'e4'], ['b', 'e7', 'e5']]]) {
+    const duel = createDuel({ code: 'R', seed: 'rep', timer: 30 });
+    joinDuel(duel, 'key-aaaa-1'); joinDuel(duel, 'key-bbbb-2'); startTurnClock(duel, 0);
+    for (const [seat, from, to] of opening) assert.ok(handleAction(duel, seat, { type: 'move', from, to, id: id() }).ok);
+    for (let i = 0; i < 10 && !duel.status.over; i++) checkTurnClock(duel, duel.deadline);
+    assert.equal(duel.status.over, true);
+    assert.match(duel.status.reason, /ran out of time 3 turns in a row/, `opening of ${opening.length} moves`);
+    assert.ok(duel.status.winner);
+  }
+});

@@ -11,7 +11,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { createDuel, joinDuel, seatFor, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
+import { createDuel, joinDuel, seatFor, cleanName, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
 
 // Altare tells us which port to use through the PORT variable.
 // On your own computer it falls back to 3000.
@@ -25,6 +25,7 @@ const EMPTY_ROOM_LIFETIME = 15 * 60_000;
 const MAX_ROOMS = 500;
 // Nudges and quick comms can't be spammed: one nudge every 20 seconds, one quick message every 3.
 const NUDGE_GAP = 20_000, EMOTE_GAP = 3_000;
+const MAX_WATCHERS = 20; // people watching one duel (on top of its two players)
 
 // Which web pages may connect. The game's own site, this server's own test
 // page, and your computer while testing. Add more, comma-separated, in an
@@ -70,7 +71,7 @@ const wss = new WebSocketServer({
 });
 
 // Every duel lives here, looked up by its room code.
-// room = { duel, sockets: {w, b}, leaveTimers: {w, b}, emptySince }
+// room = { duel, sockets: {w, b}, watchers: Set of connections, leaveTimers: {w, b}, emptySince }
 const rooms = new Map();
 
 const isOpen = (ws) => Boolean(ws && ws.readyState === ws.OPEN);
@@ -80,9 +81,13 @@ function send(ws, msg) {
 function present(room) {
   return { w: Boolean(room.sockets.w), b: Boolean(room.sockets.b) };
 }
-// Send each player the whole board, from their own point of view.
+// Everyone in the room: the two players and any watchers.
+function everyone(room) { return [room.sockets.w, room.sockets.b, ...room.watchers].filter(Boolean); }
+function stateMsg(room, seat) { return { ...stateFor(room.duel, seat, present(room)), watchers: room.watchers.size }; }
+// Send each player the whole board, from their own point of view; watchers get the neutral view.
 function broadcast(room) {
-  for (const seat of ['w', 'b']) send(room.sockets[seat], stateFor(room.duel, seat, present(room)));
+  for (const seat of ['w', 'b']) send(room.sockets[seat], stateMsg(room, seat));
+  if (room.watchers.size) { const view = stateMsg(room, null); for (const w of room.watchers) send(w, view); }
 }
 function newSeed() { return randomBytes(6).toString('hex'); }
 
@@ -103,7 +108,7 @@ wss.on('connection', (ws) => {
       if (rooms.size >= MAX_ROOMS) return send(ws, { type: 'error', message: 'The server is busy. Please try again later.' });
       let code;
       do { code = makeCode(); } while (rooms.has(code));
-      rooms.set(code, { duel: createDuel({ code, seed: newSeed() }), sockets: { w: null, b: null }, leaveTimers: {}, emptySince: Date.now() });
+      rooms.set(code, { duel: createDuel({ code, seed: newSeed() }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
       return send(ws, { type: 'created', room: code });
     }
 
@@ -123,9 +128,21 @@ wss.on('connection', (ws) => {
         if (free) useKey = free;
         else if (offered.some((k) => seatFor(room.duel, k))) return send(ws, { type: 'resume-failed', room: code });
       }
-      const joined = joinDuel(room.duel, useKey, Math.random, typeof msg.name === 'string' ? msg.name : '');
-      if (joined.error) return send(ws, { type: 'error', message: joined.error });
+      const name = typeof msg.name === 'string' ? msg.name : '';
+      // Coming back to your own seat (keepName) keeps the name you already have in this duel.
+      const joined = joinDuel(room.duel, useKey, Math.random, msg.keepName && seatFor(room.duel, useKey) ? '' : name);
+      if (joined.error) {
+        // Both seats are taken, so this person watches instead.
+        if (!bothSeated(room.duel)) return send(ws, { type: 'error', message: joined.error });
+        if (room.watchers.size >= MAX_WATCHERS && !room.watchers.has(ws)) return send(ws, { type: 'error', message: 'This duel already has the most watchers it can take.' });
+        room.watchers.add(ws);
+        ws.roomCode = code; ws.seat = null; ws.watchName = cleanName(name, 'A watcher');
+        room.emptySince = null;
+        send(ws, { type: 'joined', room: code, seat: null, watching: true });
+        return broadcast(room);
+      }
       const seat = joined.seat;
+      room.watchers.delete(ws);
       // If this seat was already connected in another tab or an old connection, replace it.
       if (room.sockets[seat] && room.sockets[seat] !== ws) room.sockets[seat].close(4000, 'Replaced by a newer connection');
       room.sockets[seat] = ws;
@@ -138,7 +155,11 @@ wss.on('connection', (ws) => {
     }
 
     const room = rooms.get(ws.roomCode);
-    if (!room || room.sockets[ws.seat] !== ws) return;
+    if (!room) return;
+    const watching = room.watchers.has(ws);
+    if (!watching && room.sockets[ws.seat] !== ws) return;
+    // Watchers can send quick messages, but nothing else: no moves, nudges or resigning.
+    if (watching && msg.type !== 'emote') return;
 
     // A nudge goes to the opponent only; a quick message pops up on both screens.
     if (msg.type === 'nudge' || msg.type === 'emote') {
@@ -148,9 +169,9 @@ wss.on('connection', (ws) => {
       if (msg.type === 'emote' && !EMOTES[msg.code]) return;
       ws.lastSent[msg.type] = now;
       const other = ws.seat === 'w' ? 'b' : 'w';
-      const out = { type: msg.type, from: ws.seat, name: room.duel.names[ws.seat], code: msg.code, text: EMOTES[msg.code] };
+      const out = { type: msg.type, from: watching ? 'watch' : ws.seat, name: watching ? ws.watchName : room.duel.names[ws.seat], code: msg.code, text: EMOTES[msg.code] };
       if (msg.type === 'nudge') send(room.sockets[other], out);
-      else for (const s of ['w', 'b']) send(room.sockets[s], out);
+      else for (const c of everyone(room)) send(c, out);
       return;
     }
 
@@ -167,19 +188,22 @@ wss.on('connection', (ws) => {
         // Sides are swapped, so swap the connections too.
         room.sockets = { w: room.sockets.b, b: room.sockets.w };
         for (const s of ['w', 'b']) if (room.sockets[s]) { room.sockets[s].seat = s; send(room.sockets[s], { type: 'joined', room: room.duel.code, seat: s, rematch: true }); }
+        for (const w of room.watchers) send(w, { type: 'joined', room: room.duel.code, seat: null, watching: true, rematch: true });
       }
       // Both players see the battle result first, then the new board.
-      if (outcome.battle) for (const s of ['w', 'b']) send(room.sockets[s], { type: 'battle', ...outcome.battle });
+      if (outcome.battle) for (const c of everyone(room)) send(c, { type: 'battle', ...outcome.battle });
       return broadcast(room);
     }
   });
 
   ws.on('close', () => {
     const room = rooms.get(ws.roomCode);
-    if (!room || room.sockets[ws.seat] !== ws) return;
+    if (!room) return;
+    if (room.watchers.delete(ws)) { if (!room.sockets.w && !room.sockets.b && !room.watchers.size) room.emptySince = Date.now(); return broadcast(room); }
+    if (room.sockets[ws.seat] !== ws) return;
     const seat = ws.seat;
     room.sockets[seat] = null;
-    if (!room.sockets.w && !room.sockets.b) room.emptySince = Date.now();
+    if (!room.sockets.w && !room.sockets.b && !room.watchers.size) room.emptySince = Date.now();
     broadcast(room);
     // Give them a minute to come back. If they don't, the player still here wins.
     const duel = room.duel;

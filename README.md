@@ -30,6 +30,11 @@ Each browser tab is its own player, so two tabs on one computer can play each ot
 - **Rematch** needs both players to ask, and then the sides swap.
 - Each duel has its own dice seed, which is shown at the end so the duel can be replayed.
 
+## Watchers and rejoining
+
+- The first two people with a duel code play. Anyone after that joins as a **watcher** (up to 20 per duel): they get every board update and battle, and can send quick reactions, but anything else they send is ignored. Every `state` message includes `watchers`, the number watching.
+- A new tab can send `resume: [keys]` (seat keys its device remembers). If one of those seats isn't connected, it gets that seat back; if they're all in use, the server replies `resume-failed` so the tab can join as someone new.
+
 ## Messages
 
 - **Browser to server:**

@@ -1,11 +1,12 @@
 {
-  "name": "altare-multiplayer-test",
+  "name": "fortunes-gambit-duel-server",
   "version": "1.0.0",
-  "description": "Tiny two-player turn-based test game to try out multiplayer on Altare",
+  "description": "Fortune's Gambit duel server: rooms, invite links, and a referee that checks moves and rolls battles",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

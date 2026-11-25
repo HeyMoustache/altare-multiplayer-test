@@ -30,6 +30,12 @@ Each browser tab is its own player, so two tabs on one computer can play each ot
 - **Rematch** needs both players to ask, and then the sides swap.
 - Each duel has its own dice seed, which is shown at the end so the duel can be replayed.
 
+## Turn timer
+
+- `create` can carry `timer`: 0 (off), 30, 60 or 120 seconds per turn. Anything else means off.
+- The clock starts when the second player sits down, and restarts after every move or attack. Each `state` includes `timer` and `turnLeft` (milliseconds left, or null).
+- Run out and the turn passes to the other side (recorded as a `timeout` action). Run out 3 turns in a row and you lose. A rematch keeps the timer.
+
 ## Watchers and rejoining
 
 - The first two people with a duel code play. Anyone after that joins as a **watcher** (up to 20 per duel): they get every board update and battle, and can send quick reactions, but anything else they send is ignored. Every `state` message includes `watchers`, the number watching.

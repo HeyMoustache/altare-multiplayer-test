@@ -11,7 +11,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { createDuel, joinDuel, seatFor, cleanName, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
+import { createDuel, joinDuel, seatFor, cleanName, startTurnClock, checkTurnClock, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
 
 // Altare tells us which port to use through the PORT variable.
 // On your own computer it falls back to 3000.
@@ -86,8 +86,16 @@ function everyone(room) { return [room.sockets.w, room.sockets.b, ...room.watche
 function stateMsg(room, seat) { return { ...stateFor(room.duel, seat, present(room)), watchers: room.watchers.size }; }
 // Send each player the whole board, from their own point of view; watchers get the neutral view.
 function broadcast(room) {
+  armClock(room);
   for (const seat of ['w', 'b']) send(room.sockets[seat], stateMsg(room, seat));
   if (room.watchers.size) { const view = stateMsg(room, null); for (const w of room.watchers) send(w, view); }
+}
+// Turn timer: wake up when the current turn runs out, and pass the turn on if it has.
+function armClock(room) {
+  clearTimeout(room.clockTimer);
+  const d = room.duel.deadline;
+  if (!d) return;
+  room.clockTimer = setTimeout(() => { if (checkTurnClock(room.duel)) broadcast(room); }, Math.max(0, d - Date.now()) + 50);
 }
 function newSeed() { return randomBytes(6).toString('hex'); }
 
@@ -108,8 +116,8 @@ wss.on('connection', (ws) => {
       if (rooms.size >= MAX_ROOMS) return send(ws, { type: 'error', message: 'The server is busy. Please try again later.' });
       let code;
       do { code = makeCode(); } while (rooms.has(code));
-      rooms.set(code, { duel: createDuel({ code, seed: newSeed() }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
-      return send(ws, { type: 'created', room: code });
+      rooms.set(code, { duel: createDuel({ code, seed: newSeed(), timer: msg.timer }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
+      return send(ws, { type: 'created', room: code, timer: rooms.get(code).duel.timer });
     }
 
     // Join (or rejoin) a duel. The key is the browser's secret ticket for its seat.
@@ -143,6 +151,8 @@ wss.on('connection', (ws) => {
       }
       const seat = joined.seat;
       room.watchers.delete(ws);
+      // The second player has just sat down: the first turn's clock starts now.
+      if (!joined.rejoined && bothSeated(room.duel) && !room.duel.deadline) startTurnClock(room.duel);
       // If this seat was already connected in another tab or an old connection, replace it.
       if (room.sockets[seat] && room.sockets[seat] !== ws) room.sockets[seat].close(4000, 'Replaced by a newer connection');
       room.sockets[seat] = ws;

@@ -23,8 +23,14 @@ export function makeCode(rand = Math.random, length = 5) {
 const otherSide = (seat) => (seat === 'w' ? 'b' : 'w');
 const SIDE_NAME = { w: 'Dawn', b: 'Dusk' };
 
+// Turn timer choices, in seconds (0 = no timer). Run out of time and your turn is
+// skipped; run out MAX_MISSED turns in a row and you lose the duel.
+export const TIMER_CHOICES = [0, 30, 60, 120];
+export const MAX_MISSED = 3;
+export const cleanTimer = (t) => (TIMER_CHOICES.includes(Number(t)) ? Number(t) : 0);
+
 // A brand-new duel: the standard starting army for both sides, no relics.
-export function createDuel({ code, seed }) {
+export function createDuel({ code, seed, timer = 0 }) {
   const chess = new R.BattleChess();
   const pieces = new Map();
   for (const [square, p] of chess.board) pieces.set(square, R.makePiece(p.type, p.color, square));
@@ -42,7 +48,36 @@ export function createDuel({ code, seed }) {
     battleCount: 0,
     rematch: { w: false, b: false },
     names: { w: '', b: '' },                     // the names players typed in
+    timer: cleanTimer(timer),                    // seconds per turn (0 = off)
+    deadline: null,                              // when the current turn runs out (ms clock), or null
+    missed: { w: 0, b: 0 },                      // turns in a row each side has run out of time
   };
+}
+
+// Start (or restart) the clock for whoever's turn it is now. The clock only runs
+// once both players are in and the duel isn't over.
+export function startTurnClock(duel, now = Date.now()) {
+  duel.deadline = duel.timer && bothSeated(duel) && !duel.status.over ? now + duel.timer * 1000 : null;
+}
+
+// Called by the server when the clock may have run out. If it has, the turn passes
+// to the other side (or, after MAX_MISSED in a row, that side loses). Returns true if
+// something changed.
+export function checkTurnClock(duel, now = Date.now()) {
+  if (!duel.deadline || now < duel.deadline || duel.status.over) return false;
+  const seat = duel.chess.turn();
+  duel.missed[seat]++;
+  if (duel.missed[seat] >= MAX_MISSED) {
+    duel.status = { over: true, winner: otherSide(seat), reason: `${SIDE_NAME[seat]} ran out of time ${MAX_MISSED} turns in a row.` };
+    record(duel, { type: 'timeout', seat, lost: true });
+    duel.deadline = null;
+    return true;
+  }
+  duel.chess.pass();
+  record(duel, { type: 'timeout', seat, missed: duel.missed[seat] });
+  checkForEnd(duel);
+  startTurnClock(duel, now);
+  return true;
 }
 
 // Player names: plain text, at most 20 characters, no control characters.
@@ -158,6 +193,7 @@ export function handleAction(duel, seat, msg) {
   if (msg.type === 'resign') {
     duel.status = { over: true, winner: otherSide(seat), reason: `${SIDE_NAME[seat]} resigned.` };
     record(duel, { type: 'resign', seat });
+    duel.deadline = null;
     return { ok: true };
   }
   if (duel.chess.turn() !== seat) return { error: "It isn't your turn." };
@@ -182,6 +218,7 @@ export function handleAction(duel, seat, msg) {
     const done = R.applyMove({ chess: duel.chess, pieces: duel.pieces }, m);
     record(duel, { type: 'move', seat, from: m.from, to: m.to });
     checkForEnd(duel);
+    duel.missed[seat] = 0; startTurnClock(duel);
     return { ok: true, promoted: done?.promoted || null };
   }
 
@@ -204,6 +241,7 @@ export function handleAction(duel, seat, msg) {
   duel.lastBattle = battle;
   record(duel, { type: 'challenge', seat, from: m.from, to: m.to, result: battle.result });
   checkForEnd(duel);
+  duel.missed[seat] = 0; startTurnClock(duel);
   return { ok: true, battle };
 }
 
@@ -216,9 +254,10 @@ function requestRematch(duel, seat) {
 }
 
 export function rematchDuel(old, seed) {
-  const duel = createDuel({ code: old.code, seed });
+  const duel = createDuel({ code: old.code, seed, timer: old.timer });
   duel.seats = { w: old.seats.b, b: old.seats.w };   // swap sides
   duel.names = { w: old.names.b, b: old.names.w };
+  startTurnClock(duel);
   return duel;
 }
 
@@ -250,6 +289,9 @@ export function stateFor(duel, seat, present = { w: false, b: false }) {
     status: duel.status,
     rematch: duel.rematch,
     lastBattle: duel.lastBattle,
+    timer: duel.timer,                                                     // seconds per turn, 0 = off
+    turnLeft: duel.deadline ? Math.max(0, duel.deadline - Date.now()) : null, // ms left this turn
+    missed: duel.missed,
     moveCount: duel.history.length,
     seed: duel.status.over ? duel.seed : undefined,   // revealed at the end, so a duel can be replayed
   };

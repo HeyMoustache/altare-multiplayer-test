@@ -266,9 +266,9 @@ export function blessTargets(from,color,pieceAt){
 export const STATS = {p:{might:2,guard:2,hp:1,nerve:0},n:{might:4,guard:3,hp:2,nerve:1},b:{might:3,guard:3,hp:2,nerve:1},r:{might:5,guard:5,hp:3,nerve:2},q:{might:6,guard:4,hp:3,nerve:2},k:{might:3,guard:6,hp:3,nerve:3}};
 export const ABILITIES = {p:'Shield Wall: +1 Guard beside an allied pawn. Spearpoint: +1 Might when attacking.',n:'Charge: +15% when it leaps over a piece to attack.',b:'Blessing: once per board, give an ally it can see along its diagonals +20% in its next battle. Free: it does not use your turn.',r:'Fortress: +2 Guard until it first moves or attacks.',q:'Command: its attacks never drop below 40%.',k:'Last Stand: anyone attacking it gets −25%.'};
 export const RELICS = {
-  whetstone:{icon:'⚔',name:'Whetstone',desc:'Your knights get +10% when attacking'},
-  bulwark:{icon:'🛡',name:'Iron Bulwark',desc:'Every piece in your army gets +1 Guard'},
-  mercy:{icon:'✦',name:'Field Surgeon',desc:'Heals one wound on every survivor'}
+  whetstone:{icon:'sword',name:'Whetstone',desc:'Your knights get +10% when attacking'},
+  bulwark:{icon:'shield',name:'Iron Bulwark',desc:'Every piece in your army gets +1 Guard'},
+  mercy:{icon:'heal',name:'Field Surgeon',desc:'Heals one wound on every survivor'}
 };
 /* Duel boons (v2.28, draft duels only). The server deals BOON_OFFER of these to both players,
    and each picks BOON_PICKS. They work like relics: ctx.relics(color) holds the picked names. */

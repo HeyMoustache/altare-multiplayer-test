@@ -1,7 +1,7 @@
 // Tests for the duel referee. Run them with:  npm test
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions, startTurnClock, checkTurnClock, cleanTimer, inDraft } from '../duel.js';
+import { createDuel, joinDuel, handleAction, stateFor, legalMoves, rematchDuel, blessOptions, startTurnClock, checkTurnClock, cleanTimer, inDraft, duelSummary } from '../duel.js';
 import { DUEL_BOONS, battleForecast, pieceStats } from '../rules.js';
 
 let n = 0; const id = () => 'id-' + (++n);
@@ -259,4 +259,16 @@ test('turn timer: skipped turns never count as a repeated position, so walking a
     assert.match(duel.status.reason, /ran out of time 3 turns in a row/, `opening of ${opening.length} moves`);
     assert.ok(duel.status.winner);
   }
+});
+
+test('summary: moves, battles and battles won per side, for the end-of-duel screen', () => {
+  const duel = createDuel({ code: 'S', seed: 'sum' });
+  joinDuel(duel, 'key-aaaa-1'); joinDuel(duel, 'key-bbbb-2');
+  handleAction(duel, 'w', { type: 'move', from: 'e2', to: 'e4', id: id() });
+  handleAction(duel, 'b', { type: 'move', from: 'd7', to: 'd5', id: id() });
+  const r = handleAction(duel, 'w', { type: 'challenge', from: 'e4', to: 'd5', id: id() });
+  const s = duelSummary(duel);
+  assert.equal(s.w.moves, 2); assert.equal(s.w.battles, 1); assert.equal(s.w.won, r.battle.result.kind === 'victory' ? 1 : 0);
+  assert.deepEqual(s.b, { moves: 1, battles: 0, won: 0 });
+  assert.deepEqual(stateFor(duel, 'w').summary, s);
 });

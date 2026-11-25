@@ -11,7 +11,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { createDuel, joinDuel, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
+import { createDuel, joinDuel, seatFor, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
 
 // Altare tells us which port to use through the PORT variable.
 // On your own computer it falls back to 3000.
@@ -73,6 +73,7 @@ const wss = new WebSocketServer({
 // room = { duel, sockets: {w, b}, leaveTimers: {w, b}, emptySince }
 const rooms = new Map();
 
+const isOpen = (ws) => Boolean(ws && ws.readyState === ws.OPEN);
 function send(ws, msg) {
   if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -113,7 +114,16 @@ wss.on('connection', (ws) => {
       const room = rooms.get(code);
       if (!room) return send(ws, { type: 'error', message: 'There is no duel with that code. Check the link, or create a new duel.' });
       if (!key) return send(ws, { type: 'error', message: 'Missing player key.' });
-      const joined = joinDuel(room.duel, key, Math.random, typeof msg.name === 'string' ? msg.name : '');
+      // A new tab on a device that played this duel offers the seat keys it remembers.
+      // Hand back whichever of those seats isn't in use right now (the tab was closed or dropped).
+      const offered = Array.isArray(msg.resume) ? msg.resume.filter((k) => typeof k === 'string' && k.length >= 8).slice(0, 2) : [];
+      let useKey = key;
+      if (offered.length && !seatFor(room.duel, key)) {
+        const free = offered.find((k) => { const s = seatFor(room.duel, k); return s && !isOpen(room.sockets[s]); });
+        if (free) useKey = free;
+        else if (offered.some((k) => seatFor(room.duel, k))) return send(ws, { type: 'resume-failed', room: code });
+      }
+      const joined = joinDuel(room.duel, useKey, Math.random, typeof msg.name === 'string' ? msg.name : '');
       if (joined.error) return send(ws, { type: 'error', message: joined.error });
       const seat = joined.seat;
       // If this seat was already connected in another tab or an old connection, replace it.
@@ -123,7 +133,7 @@ wss.on('connection', (ws) => {
       room.emptySince = null;
       ws.roomCode = code;
       ws.seat = seat;
-      send(ws, { type: 'joined', room: code, seat, rejoined: joined.rejoined });
+      send(ws, { type: 'joined', room: code, seat, rejoined: joined.rejoined, key: useKey });
       return broadcast(room);
     }
 

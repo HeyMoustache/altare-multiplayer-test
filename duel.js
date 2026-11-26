@@ -10,6 +10,7 @@
 //  new rules.js into this folder too, so the referee and the game agree.
 // ------------------------------------------------------------
 
+import { cleanPlayerName } from './names.js';
 import * as R from './rules.js';
 
 // Room codes avoid letters that are easy to mix up (O/0, I/1, L).
@@ -100,9 +101,9 @@ export function checkTurnClock(duel, now = Date.now()) {
 }
 
 // Player names: plain text, at most 20 characters, no control characters.
+// Names go through the shared filter in names.js: tidied, and a rude name becomes the fallback.
 export function cleanName(name, fallback) {
-  const clean = String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20);
-  return clean || fallback;
+  return cleanPlayerName(name, fallback);
 }
 
 // Quick comms: a fixed set of messages, so there is no free typing to moderate.
@@ -351,4 +352,20 @@ export function stateFor(duel, seat, present = { w: false, b: false }) {
     moveCount: duel.history.length,
     seed: duel.status.over ? duel.seed : undefined,   // revealed at the end, so a duel can be replayed
   };
+}
+
+// v2.37: the public duel list, from the server's rooms. Up to LIST_MAX rooms, newest first.
+// A room still waiting for its second player drops off after LIST_WAIT_MAX, or once its creator leaves.
+export const LIST_MAX = 20, LIST_WAIT_MAX = 10 * 60_000;
+export function listPublicRooms(rooms, now = Date.now()) {
+  const list = [];
+  for (const [code, r] of rooms) {
+    if (!r.public || r.duel.status.over) continue;
+    const seated = bothSeated(r.duel);
+    if (!seated && now - r.createdAt > LIST_WAIT_MAX) continue;
+    if (!seated && !r.sockets.w && !r.sockets.b) continue;
+    const host = r.duel.names.w || r.duel.names.b || 'A player';
+    list.push({ code, host, names: r.duel.names, mode: r.duel.mode, timer: r.duel.timer, status: seated ? 'playing' : 'waiting', watchers: r.watchers.size, createdAt: r.createdAt });
+  }
+  return list.sort((a, b) => b.createdAt - a.createdAt).slice(0, LIST_MAX).map(({ createdAt, ...rest }) => rest);
 }

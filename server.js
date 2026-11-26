@@ -11,7 +11,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { createDuel, joinDuel, seatFor, cleanName, startTurnClock, checkTurnClock, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES } from './duel.js';
+import { createDuel, joinDuel, seatFor, cleanName, startTurnClock, checkTurnClock, handleAction, stateFor, rematchDuel, bothSeated, makeCode, EMOTES, listPublicRooms } from './duel.js';
 
 // Altare tells us which port to use through the PORT variable.
 // On your own computer it falls back to 3000.
@@ -116,8 +116,22 @@ wss.on('connection', (ws) => {
       if (rooms.size >= MAX_ROOMS) return send(ws, { type: 'error', message: 'The server is busy. Please try again later.' });
       let code;
       do { code = makeCode(); } while (rooms.has(code));
-      rooms.set(code, { duel: createDuel({ code, seed: newSeed(), timer: msg.timer, mode: msg.mode }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now() });
-      return send(ws, { type: 'created', room: code, timer: rooms.get(code).duel.timer, mode: rooms.get(code).duel.mode });
+      // v2.37: rooms are private unless the creator asks for public. Public duels can always be
+      // watched; a private one only if the creator switched "Allow watchers" on.
+      const isPublic = msg.visibility === 'public';
+      rooms.set(code, { duel: createDuel({ code, seed: newSeed(), timer: msg.timer, mode: msg.mode }), sockets: { w: null, b: null }, watchers: new Set(), leaveTimers: {}, emptySince: Date.now(),
+        public: isPublic, allowWatchers: isPublic || msg.watchers === true, createdAt: Date.now() });
+      const r = rooms.get(code);
+      return send(ws, { type: 'created', room: code, timer: r.duel.timer, mode: r.duel.mode, visibility: r.public ? 'public' : 'private', watchers: r.allowWatchers });
+    }
+
+    // v2.37: the public list. Up to LIST_MAX rooms, newest first; rooms still waiting for a
+    // second player drop off after LIST_WAIT_MAX. Asked for every few seconds by the Duel screen.
+    if (msg.type === 'list') {
+      const now = Date.now();
+      if (now - (ws.lastList || 0) < 1000) return;
+      ws.lastList = now;
+      return send(ws, { type: 'rooms', rooms: listPublicRooms(rooms, now) });
     }
 
     // Join (or rejoin) a duel. The key is the browser's secret ticket for its seat.
@@ -142,6 +156,7 @@ wss.on('connection', (ws) => {
       if (joined.error) {
         // Both seats are taken, so this person watches instead.
         if (!bothSeated(room.duel)) return send(ws, { type: 'error', message: joined.error });
+        if (!room.allowWatchers) return send(ws, { type: 'error', message: 'This is a private duel and both seats are taken.' });
         if (room.watchers.size >= MAX_WATCHERS && !room.watchers.has(ws)) return send(ws, { type: 'error', message: 'This duel already has the most watchers it can take.' });
         room.watchers.add(ws);
         ws.roomCode = code; ws.seat = null; ws.watchName = cleanName(name, 'A watcher');

@@ -9,6 +9,7 @@ Runs on Altare at **https://gambit.martinsnelling.com**. Two players share an in
 | `server.js` | The web server and live connections: rooms, invite codes, reconnecting, who is allowed to connect |
 | `duel.js` | The referee for one duel: turns, legal moves, battles, blessings, wins, resigning, rematches |
 | `rules.js` | **An exact copy of the game's `rules.js`.** When you change a rule in the game, copy the new `rules.js` here too |
+| `names.js` | The player-name filter, an exact copy of the game's names.js |
 | `index.html` | A small page that sends anyone who visits the server (or an old invite link) to the game at martinsnelling.com/gambit |
 | `tests/` | Automatic checks. Run `npm test` |
 
@@ -27,6 +28,12 @@ The old 2D test page has retired. Visiting https://gambit.martinsnelling.com now
 - **The duel ends** when a king is slain, by checkmate, by resigning, by a draw, or if a player is gone for more than 60 seconds.
 - **Rematch** needs both players to ask, and then the sides swap.
 - Each duel has its own dice seed, which is shown at the end so the duel can be replayed.
+
+## Rooms, the public list and names (v2.37)
+
+- `create` can carry `visibility`: `'public'` or `'private'` (the default), and `watchers: true` to let people with the code watch a full private duel. Public duels can always be watched; a full private room without watchers answers "This is a private duel and both seats are taken."
+- `{type:'list'}` returns `{type:'rooms', rooms:[…]}`: public rooms, newest first, at most 20, each with code, host, names, mode, timer, status (`waiting` / `playing`) and watchers. Rooms waiting more than 10 minutes, or whose creator has left, aren't listed. At most one list a second per connection.
+- Names go through `names.js` (a shared copy of the game's file): tidied, and rude names (even disguised) are replaced with "Dawn player" / "Dusk player".
 
 ## Draft duels
 

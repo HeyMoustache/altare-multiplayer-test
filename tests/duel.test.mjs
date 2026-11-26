@@ -272,3 +272,20 @@ test('summary: moves, battles and battles won per side, for the end-of-duel scre
   assert.deepEqual(s.b, { moves: 1, battles: 0, won: 0 });
   assert.deepEqual(stateFor(duel, 'w').summary, s);
 });
+
+test('public list: newest first, at most 20, hides rooms waiting over 10 minutes or abandoned', async () => {
+  const { listPublicRooms, LIST_MAX } = await import('../duel.js');
+  const rooms = new Map(); const now = 1_000_000_000;
+  const add = (code, { pub = true, age = 0, seated = 1, here = true } = {}) => {
+    const duel = createDuel({ code, seed: code });
+    joinDuel(duel, 'k-' + code + '-aaaa', () => 0.1, 'Host ' + code); if (seated === 2) joinDuel(duel, 'k-' + code + '-bbbb', () => 0.1, 'Guest');
+    rooms.set(code, { duel, public: pub, createdAt: now - age, sockets: { w: here ? {} : null, b: here ? {} : null }, watchers: new Set() });
+  };
+  add('OLD01', { age: 11 * 60_000 }); add('OLD02', { age: 11 * 60_000, seated: 2 }); add('PRIV1', { pub: false }); add('GONE1', { here: false });
+  for (let i = 0; i < 25; i++) add('R' + String(i).padStart(4, '0'), { age: i * 1000 });
+  const list = listPublicRooms(rooms, now);
+  assert.equal(list.length, LIST_MAX);
+  assert.equal(list[0].code, 'R0000', 'newest first');
+  assert.ok(!list.some((r) => ['OLD01', 'PRIV1', 'GONE1'].includes(r.code)));
+  assert.ok(listPublicRooms(new Map([['OLD02', rooms.get('OLD02')]]), now).length === 1, 'a game in play stays listed for watchers');
+});

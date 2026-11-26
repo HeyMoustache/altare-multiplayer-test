@@ -112,7 +112,7 @@ test('a third person watches: sees the board and battles, can react, but cannot 
     const next = async (type) => { for (let i = 0; i < 100; i++) { const k = inbox.findIndex((m) => m.type === type); if (k >= 0) return inbox.splice(k, 1)[0]; await wait(20); } throw new Error('no ' + type); };
     return { ws, inbox, next, opened: new Promise((r) => ws.on('open', r)), send: (m) => ws.send(JSON.stringify(m)) }; };
   const a = at(), b = at(), v = at(); await a.opened; await b.opened; await v.opened;
-  a.send({ type: 'create' }); const { room } = await a.next('created');
+  a.send({ type: 'create', watchers: true }); const { room } = await a.next('created');
   a.send({ type: 'join', room, key: 'alice-key-1', name: 'Alice' }); const ja = await a.next('joined');
   b.send({ type: 'join', room, key: 'bob-key-123', name: 'Bob' }); await b.next('joined');
   v.send({ type: 'join', room, key: 'viv-key-123', name: 'Viv' });
@@ -175,4 +175,39 @@ test('the server page forwards visitors (and old invite links) to the game', asy
   assert.match(html, /https:\/\/martinsnelling\.com\/gambit\//);
   assert.match(html, /q\.get\('duel'\) \|\| q\.get\('room'\)/);
   assert.ok(!html.includes('WebSocket'), 'the old 2D test client is gone');
+});
+
+test('private rooms turn watchers away unless allowed; public rooms are listed and watchable', async (t) => {
+  const port = PORT + 31, u = `ws://127.0.0.1:${port}`;
+  const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port) }, cwd: new URL('..', import.meta.url) });
+  t.after(() => srv.kill());
+  await wait(600);
+  const at = () => { const ws = new WebSocket(u); const inbox = []; ws.on('message', (d) => inbox.push(JSON.parse(d)));
+    const next = async (type) => { for (let i = 0; i < 100; i++) { const k = inbox.findIndex((m) => m.type === type); if (k >= 0) return inbox.splice(k, 1)[0]; await wait(20); } throw new Error('no ' + type); };
+    return { ws, inbox, next, opened: new Promise((r) => ws.on('open', r)), send: (m) => ws.send(JSON.stringify(m)) }; };
+  const [a, b, v, l] = [at(), at(), at(), at()]; for (const c of [a, b, v, l]) await c.opened;
+  // A private room, watchers off (the default): the third person is turned away.
+  a.send({ type: 'create' }); const c1 = await a.next('created');
+  assert.equal(c1.visibility, 'private'); assert.equal(c1.watchers, false);
+  a.send({ type: 'join', room: c1.room, key: 'alice-key-1', name: 'Alice' }); await a.next('joined');
+  b.send({ type: 'join', room: c1.room, key: 'bob-key-123', name: 'Bob' }); await b.next('joined');
+  v.send({ type: 'join', room: c1.room, key: 'viv-key-123', name: 'Viv' });
+  assert.match((await v.next('error')).message, /private duel and both seats are taken/);
+  // Private rooms never appear in the public list.
+  l.send({ type: 'list' }); assert.deepEqual((await l.next('rooms')).rooms, []);
+  // A public room: listed while waiting, then as "playing", and watchable.
+  const p1 = at(), p2 = at(); await p1.opened; await p2.opened;
+  p1.send({ type: 'create', visibility: 'public', mode: 'draft', timer: 60 }); const c2 = await p1.next('created');
+  assert.equal(c2.visibility, 'public'); assert.equal(c2.watchers, true);
+  p1.send({ type: 'join', room: c2.room, key: 'pub-key-111', name: 'sh1t lord' }); await p1.next('joined');
+  await wait(1100); l.send({ type: 'list' });
+  const list = (await l.next('rooms')).rooms;
+  assert.equal(list.length, 1); assert.equal(list[0].code, c2.room); assert.equal(list[0].status, 'waiting');
+  assert.equal(list[0].mode, 'draft'); assert.equal(list[0].timer, 60);
+  assert.match(list[0].host, /^(Dawn|Dusk) player$/, 'a rude name is replaced before anyone sees it');
+  p2.send({ type: 'join', room: c2.room, key: 'pub-key-222', name: 'Pat' }); await p2.next('joined');
+  await wait(1100); l.send({ type: 'list' }); assert.equal((await l.next('rooms')).rooms[0].status, 'playing');
+  l.send({ type: 'join', room: c2.room, key: 'look-key-12', name: 'Lou' });
+  assert.equal((await l.next('joined')).watching, true);
+  for (const c of [a, b, v, l, p1, p2]) c.ws.close();
 });
